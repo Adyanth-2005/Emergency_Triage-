@@ -55,103 +55,30 @@ Selected from PRD-05 §5, filtered to the four in-scope FRs. Stories 2, 5, 6, 7 
 
 ---
 
-## 3. Data Model Draft (ERD)
+## 4. Data model draft (ERD)
 
-```
-┌──────────────────────┐
-│      patient         │        Quick-reg (FR-2): every column
-│──────────────────────│        except id / temp_id / created_at
-│ PK id                │        is NULLABLE by design.
-│    uhid          NULL│        A patient can exist with a temp ID
-│    temp_id       UNIQ│        and literally nothing else.
-│    name          NULL│
-│    age_years     NULL│
-│    sex           NULL│
-│    phone         NULL│
-│    is_unknown    BOOL│
-│    reconciled_at NULL│
-│    created_at        │
-└──────────┬───────────┘
-           │ 1
-           │
-           │ N
-┌──────────▼───────────┐         ┌────────────────────────┐
-│   ed_encounter       │    1  N │      triage_event      │
-│──────────────────────│────────▶│────────────────────────│
-│ PK id                │         │ PK id                  │
-│ FK patient_id        │         │ FK encounter_id        │
-│    arrival_ts        │         │    triaged_ts          │
-│    arrival_mode      │         │    chief_complaint     │
-│    is_mlc       BOOL │         │    hr, rr, sbp, dbp    │
-│    status            │         │    spo2, temp_c, gcs   │
-│    closed_ts    NULL │         │    red_flags   (JSON)  │
-└───┬──────────┬───────┘         │    suggested_level  1-5│
-    │ 1        │ 1               │    final_level      1-5│
-    │          │                 │    override_reason NULL│
-    │ 0..1     │ 0..1            │    triaged_by          │
-┌───▼──────────┴───┐             └────────────────────────┘
-│   mlc_case       │              N.B. suggested_level AND
-│──────────────────│              final_level are BOTH stored.
-│ PK id            │              Overriding never erases the
-│ FK encounter_id  │              machine's opinion. (Risk §11:
-│    mlc_serial UNIQ│             "VIP pressure" — the override
-│    mlc_type      │              log is the countermeasure.)
-│    brought_by    │
-│    opened_ts     │             ┌────────────────────────┐
-│    opened_by     │        1  N │  police_intimation     │
-└────────┬─────────┘────────────▶│────────────────────────│
-         │                       │ PK id                  │
-         │                       │ FK mlc_case_id         │
-         │                       │    intimated_ts        │
-         │                       │    police_station      │
-         │                       │    constable_name      │
-         │                       │    constable_badge     │
-         │                       │    mode (phone/written/│
-         │                       │          e-portal/     │
-         │                       │          in_person)    │
-         │                       │    ack_ref        NULL │
-         │                       │    logged_by           │
-         │                       └────────────────────────┘
-┌────────▼─────────────┐
-│    disposition       │  ◀── 1:0..1 from ed_encounter
-│──────────────────────│
-│ PK id                │      type ∈ {ADMIT, REFER_OUT, DISCHARGE,
-│ FK encounter_id  UNIQ│              LAMA, DEATH, BROUGHT_DEAD}
-│    type              │
-│    decided_ts        │      Conditional payloads:
-│    decided_by        │       ADMIT      → ward_requested (stub → PRD-02)
-│    ward_requested NULL│      REFER_OUT  → referral_facility, referral_reason
-│    referral_facility │      DISCHARGE   → discharge_instructions
-│    referral_reason   │      LAMA        → lama_counselled_by, lama_risks_explained,
-│    discharge_instr   │                     lama_witness
-│    lama_counselled_by│      DEATH       → death_ts, cause_of_death_icd10,
-│    lama_risks_expl   │                     mccd_form4_ref
-│    lama_witness      │
-│    death_ts          │
-│    cause_icd10       │
-│    mccd_form4_ref    │
-│    mlc_warning_ack   │  ◀── US-6: recorded justification if
-│    mlc_warning_reason│      disposed with MLC intimation pending
-└──────────────────────┘
+```mermaid
+erDiagram
+    USER ||--o{ EMERGENCY_ENCOUNTER : creates
+    USER ||--o{ TRIAGE_ASSESSMENT : performs
+    USER ||--o{ AUDIT_LOG : generates
+    PATIENT ||--o{ EMERGENCY_ENCOUNTER : has
+    EMERGENCY_ENCOUNTER ||--o{ TRIAGE_ASSESSMENT : "assessed (re-triage capable)"
+    TRIAGE_ASSESSMENT ||--|| VITAL_SIGNS : records
+    EMERGENCY_ENCOUNTER ||--o| MLC_CASE : "flagged as"
+    MLC_CASE ||--o{ POLICE_INTIMATION : logs
+    EMERGENCY_ENCOUNTER ||--o| DISPOSITION : "ends in"
 
-┌──────────────────────┐   ┌──────────────────────┐
-│  triage_scale_config │   │      audit_log       │
-│──────────────────────│   │──────────────────────│
-│ PK id                │   │ PK id                │  Append-only.
-│    scale_name        │   │    ts                │  NFR §7: "every
-│    level        1-5  │   │    actor             │  timestamp
-│    label             │   │    action            │  medico-legally
-│    colour            │   │    entity / entity_id│  defensible".
-│    max_wait_minutes  │   │    detail     (JSON) │  Hash-chaining is
-│    criteria    (JSON)│   │    prev_hash         │  a stretch goal.
-│    active       BOOL │   │    row_hash          │
-└──────────────────────┘   └──────────────────────┘
-   FR-1 "configurable          Chained SHA-256: row_hash =
-    scale" lives HERE.         H(prev_hash ‖ canonical(row)).
-    Swapping AIIMS→ESI         Tamper-evidence for MLC records.
-    = new config rows,
-    zero code change.
+    PATIENT { int id PK  string code UK  bool is_unknown  bool is_reconciled  string name  int age  string sex }
+    EMERGENCY_ENCOUNTER { int id PK  string number UK  int patient_id FK  datetime arrival_at  string status  bool mlc_flag  int current_level  datetime first_physician_at }
+    TRIAGE_ASSESSMENT { int id PK  int encounter_id FK  string chief_complaint  string red_flags  string avpu  int suggested_level  int final_level  bool is_override  string override_reason }
+    VITAL_SIGNS { int id PK  int triage_id FK,UK  int hr  int rr  int sbp  int spo2  float temp_c  int pain }
+    MLC_CASE { int id PK  string mlc_number UK  int encounter_id FK,UK  string incident_type  string police_station  string status }
+    POLICE_INTIMATION { int id PK  int mlc_id FK  datetime intimated_at  string method  string officer_name  string badge_number }
+    DISPOSITION { int id PK  int encounter_id FK,UK  string dtype  datetime decided_at  int decided_by_id FK }
+    AUDIT_LOG { int id PK  datetime at  string action  string entity_type  int entity_id  text details  string prev_hash  string record_hash }
 ```
+
 
 ### Three modelling decisions worth defending in the viva
 
