@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Emergency Department Triage & Medico-Legal console (PRD-05 / P5)">
+  <title>ED Triage Console · P5</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/console.css') }}">
+  <!-- "Integrated Biosciences" skin — bioluminescent laboratory at midnight -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/lab-theme.css') }}">
+</head>
+<body>
+  <!-- signature "Midnight Vitals Field" (renders a static frame under prefers-reduced-motion) -->
+  <canvas class="labfield" id="lab" aria-hidden="true"></canvas>
+
+  <div id="app" class="app" aria-busy="true"></div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+  <div id="overlay-root"></div>
+
+  <script src="{{ url_for('static', filename='js/lab.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
