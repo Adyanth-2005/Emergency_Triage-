@@ -1,0 +1,5 @@
+# P5 — Emergency Department Triage & Medico-Legal Console
+# Offline NFR (design decision D-7): the runtime depends ONLY on Flask.
+# No CDN, no web fonts, no external API calls. Charts are hand-rolled SVG;
+# the UI is dependency-free vanilla JS. SQLite ships with the Python stdlib.
+Flask>=3.0,<4.0

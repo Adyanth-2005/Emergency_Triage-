@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>ED Triage Console · P5 — PREVIEW HARNESS</title>
+  <link rel="stylesheet" href="static/css/console.css">
+  <link rel="stylesheet" href="static/css/lab-theme.css">
+  <script>
+  /* =====================================================================
+     PREVIEW HARNESS — in-browser deterministic API stub.
+     Lets the console (and THE LIVING WARD field) run with no backend, for
+     design review only. The real product runs `python app.py`; this file
+     is NOT served by Flask and changes nothing in the product.
+     ===================================================================== */
+  (() => {
+    "use strict";
+    const NOW = Date.now();
+    const iso = minAgo => new Date(NOW - minAgo * 60000).toISOString();
+    const rnd = (seed => () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; })(42);
+    const hex = n => { let s = ""; for (let i = 0; i < n; i++) s += "0123456789abcdef"[Math.floor(rnd() * 16)]; return s; };
+
+    const SCALE = [
+      { level: 1, label: "Resuscitation", max_wait_minutes: 0,   criteria: { red_flags: ["cardiac_arrest", "unresponsive", "active_seizure"] } },
+      { level: 2, label: "Emergent",      max_wait_minutes: 10,  criteria: { red_flags: ["chest_pain_ischaemic", "stroke_fast_positive", "major_trauma", "poisoning_ingestion"] } },
+      { level: 3, label: "Urgent",        max_wait_minutes: 30,  criteria: { red_flags: ["moderate_trauma", "persistent_vomiting"] } },
+      { level: 4, label: "Less urgent",   max_wait_minutes: 60,  criteria: { red_flags: ["simple_laceration"] } },
+      { level: 5, label: "Non-urgent",    max_wait_minutes: 120, criteria: { red_flags: ["minor_fracture"] } },
+    ];
+
+    function seedStore() {
+      const E = {};
+      const mk = (id, o) => { E[id] = Object.assign({ id, status: "TRIAGED", arrival_min: 30, arrival_mode: "WALK_IN", is_mlc: false, mlc: null, intimations: [], disposition: null, first_physician_at: null, triages: [], patient: {} }, o); };
+      mk(101, { patient: { name: "Suresh Gowda", uhid: "UH-2026-04412", age_years: 34, sex: "M", phone: "98450 11223" }, arrival_min: 42, arrival_mode: "AMBULANCE_108", chief: "RTA — two-wheeler vs car, right femur deformity", level: 2, is_mlc: true,
+        mlc: { id: 11, mlc_serial: "MLC/2026/000429", mlc_type: "RTA", pocso_flag: 0, opened_ts: iso(35), opened_by: "Dr. A. Verma (Physician)", status: "REGISTERED" },
+        triages: [{ final_level: 2, suggested_level: 2, triaged_ts: iso(38), chief_complaint: "RTA — two-wheeler vs car, right femur deformity", triaged_by: "N. Priya (Triage Nurse)", is_retriage: 0, hr: 112, rr: 22, sbp: 104, spo2: 96, gcs: 15, red_flags: ["major_trauma"] }] });
+      mk(102, { patient: { name: null, temp_id: "T-2026-0107", age_years: null, sex: "UNKNOWN" }, status: "ARRIVED", arrival_min: 6, arrival_mode: "GOOD_SAMARITAN", chief: null, level: null, brought_by: "Auto driver (declined details)" });
+      mk(103, { patient: { name: "Meena Krishnan", uhid: "UH-2026-04418", age_years: 61, sex: "F", phone: "99010 55678" }, arrival_min: 25, chief: "Crushing chest pain radiating to left arm", level: 1, breach: true,
+        triages: [{ final_level: 1, suggested_level: 1, triaged_ts: iso(21), chief_complaint: "Crushing chest pain radiating to left arm", triaged_by: "N. Priya (Triage Nurse)", is_retriage: 0, hr: 128, rr: 24, sbp: 88, spo2: 91, gcs: 15, red_flags: ["chest_pain_ischaemic"] }] });
+      mk(104, { patient: { name: "Aarav Shetty", uhid: "UH-2026-04421", age_years: 6, sex: "M", phone: "97400 88991" }, arrival_min: 95, status: "IN_TREATMENT", first_physician_at: iso(64), chief: "High fever with rigors, 3 days", level: 3,
+        triages: [{ final_level: 3, suggested_level: 3, triaged_ts: iso(88), chief_complaint: "High fever with rigors, 3 days", triaged_by: "N. Priya (Triage Nurse)", is_retriage: 0, hr: 124, rr: 26, temp_c: 39.8, spo2: 97, gcs: 15, red_flags: [] }] });
+      mk(105, { patient: { name: "Ravi Patil", uhid: "UH-2026-04424", age_years: 45, sex: "M" }, arrival_min: 92, chief: "Deep laceration left forearm (workshop)", level: 4, breach: true,
+        triages: [{ final_level: 4, suggested_level: 3, triaged_ts: iso(85), chief_complaint: "Deep laceration left forearm (workshop)", triaged_by: "N. Priya (Triage Nurse)", is_retriage: 0, hr: 84, sbp: 132, spo2: 99, gcs: 15, red_flags: ["simple_laceration"], override_reason: "Bleeding controlled, distal pulses intact; suitable for suture room queue." }] });
+      mk(106, { patient: { name: "Fatima Begum", uhid: "UH-2026-04426", age_years: 28, sex: "F", phone: "96200 33445" }, arrival_min: 34, chief: "Acute abdominal pain, RIF", level: 3,
+        triages: [{ final_level: 3, suggested_level: 3, triaged_ts: iso(29), chief_complaint: "Acute abdominal pain, RIF", triaged_by: "N. Priya (Triage Nurse)", is_retriage: 0, hr: 98, temp_c: 37.9, sbp: 118, spo2: 98, gcs: 15, red_flags: [] }] });
+      mk(107, { patient: { name: "Lakshmi Naik", uhid: "UH-2026-04428", age_years: 72, sex: "F" }, status: "ARRIVED", arrival_min: 12, arrival_mode: "WALK_IN", chief: null, level: null });
+      mk(108, { patient: { name: "Imran Khan", uhid: "UH-2026-04430", age_years: 23, sex: "M", phone: "90080 66778" }, arrival_min: 130, status: "IN_TREATMENT", first_physician_at: iso(110), arrival_mode: "POLICE", chief: "Assault — blunt injury head & face", level: 2, is_mlc: true,
+        mlc: { id: 12, mlc_serial: "MLC/2026/000430", mlc_type: "ASSAULT", pocso_flag: 0, opened_ts: iso(120), opened_by: "Dr. S. Menon (CMO)", status: "REGISTERED" },
+        intimations: [{ intimated_ts: iso(105), mode: "PHONE", police_station: "Hebbal PS", constable_name: "HC Ramesh", constable_badge: "KA-1123", logged_by: "Dr. S. Menon (CMO)" }],
+        triages: [{ final_level: 2, suggested_level: 2, triaged_ts: iso(122), chief_complaint: "Assault — blunt injury head & face", triaged_by: "N. Priya (Triage Nurse)", is_retriage: 0, hr: 96, sbp: 128, spo2: 98, gcs: 14, red_flags: ["major_trauma"] }] });
+      return { E, nextId: 120, nextMlc: 431, tempN: 108, chainIntact: true };
+    }
+    let S = seedStore();
+    // DEMO: severed-chain state (preview-only). Open preview.html?broken=1
+    // or run window.__lwToggleChain() in the console, then revisit Audit.
+    if (/[?&]broken=1/.test(location.search)) S.chainIntact = false;
+    window.__lwToggleChain = () => { S.chainIntact = !S.chainIntact; return S.chainIntact; };
+
+    const active = () => Object.values(S.E).filter(e => e.status !== "CLOSED");
+    const boardRow = e => ({
+      encounter_id: e.id,
+      display_name: e.patient.name || ("[UNKNOWN] " + (e.patient.temp_id || "")),
+      identifier: e.patient.uhid || e.patient.temp_id || "—",
+      age_years: e.patient.age_years, sex: e.patient.sex,
+      chief_complaint: e.chief, level: e.level,
+      arrival_ts: iso(e.arrival_min), elapsed_minutes: e.arrival_min,
+      status: e.status, is_mlc: e.is_mlc, mlc_serial: e.mlc && e.mlc.mlc_serial,
+      is_breached: !!e.breach,
+    });
+    const pendingIntim = e => !!(e.is_mlc && e.mlc && !e.intimations.length);
+
+    function dashboard() {
+      const a = active();
+      const mix = {}; a.forEach(e => { if (e.level && e.status !== "IN_TREATMENT") mix[e.level] = (mix[e.level] || 0) + 1; });
+      return {
+        active_encounters: a.length,
+        awaiting_triage: a.filter(e => e.status === "ARRIVED").length,
+        awaiting_physician: a.filter(e => e.status === "TRIAGED").length,
+        breaches: a.filter(e => e.breach).length,
+        door_to_doctor_median_min: 14,
+        mlc_active: a.filter(e => e.is_mlc).length,
+        intimation_pending: a.filter(pendingIntim).length,
+        in_treatment: a.filter(e => e.status === "IN_TREATMENT").length,
+        overrides: 3, unknown_active: a.filter(e => !e.patient.name).length,
+        level_mix: mix,
+        disposition_mix: { ADMIT: 5, DISCHARGE: 9, REFER_OUT: 2, LAMA: 1, DEATH: 1 },
+        audit_chain_intact: S.chainIntact, audit_first_broken_row: S.chainIntact ? null : 18,
+        generated_at: new Date(NOW).toISOString(), total_encounters: 26, total_patients: 24,
+      };
+    }
+
+    function suggest(body) {
+      const rf = (body && body.red_flags) || []; const v = (body && body.vitals) || {};
+      const reasons = []; let lvl = null;
+      const l1 = ["cardiac_arrest", "unresponsive", "active_seizure"], l2 = ["chest_pain_ischaemic", "stroke_fast_positive", "major_trauma", "poisoning_ingestion"];
+      rf.forEach(f => { if (l1.includes(f)) { lvl = 1; reasons.push("red flag: " + f); } });
+      if (lvl == null) rf.forEach(f => { if (l2.includes(f)) { lvl = 2; reasons.push("red flag: " + f); } });
+      if (v.gcs != null && v.gcs <= 8) { lvl = 1; reasons.push("gcs = " + v.gcs + " (≤8)"); }
+      if (v.spo2 != null && v.spo2 < 90) { lvl = Math.min(lvl || 9, 1); reasons.push("spo2 = " + v.spo2 + " (<90)"); }
+      else if (v.spo2 != null && v.spo2 < 94) { lvl = Math.min(lvl || 9, 2); reasons.push("spo2 = " + v.spo2 + " (<94)"); }
+      if (v.sbp != null && v.sbp < 90) { lvl = Math.min(lvl || 9, 2); reasons.push("sbp = " + v.sbp + " (<90)"); }
+      if (v.hr != null && (v.hr > 130 || v.hr < 40)) { lvl = Math.min(lvl || 9, 2); reasons.push("hr = " + v.hr); }
+      if (lvl == null && rf.length) { lvl = 3; reasons.push("red flag: " + rf[0]); }
+      if (lvl == null) { lvl = 4; reasons.push("no rule matched — safe default"); }
+      const all = ["hr", "rr", "sbp", "dbp", "spo2", "temp_c", "gcs"];
+      return { suggested_level: lvl, label: SCALE[lvl - 1].label, reasons, vitals_missing: all.filter(k => v[k] == null) };
+    }
+
+    function auditEntries() {
+      const acts = ["QUICK_REG", "TRIAGE_CONFIRMED", "TRIAGE_OVERRIDE", "PHYSICIAN_ATTEND", "MLC_OPENED", "POLICE_INTIMATION", "DISPOSITION", "DEMO_SEED"];
+      const actors = ["N. Priya (Triage Nurse)", "Dr. A. Verma (Physician)", "Dr. S. Menon (CMO)", "System Admin (Admin)"];
+      const ents = ["encounter", "triage", "mlc_case", "intimation", "disposition"];
+      const entries = []; let prev = "0".repeat(64);
+      for (let i = 0; i < 42; i++) {
+        const h = hex(64);
+        entries.push({ ts: iso(420 - i * 10), actor: actors[i % 4], action: acts[i % 8], entity: ents[i % 5], entity_id: 60 + i,
+          detail_json: JSON.stringify({ ref: "row " + (i + 1), prev: prev.slice(0, 8) }), row_hash: h });
+        prev = h;
+      }
+      return { chain_intact: S.chainIntact, first_broken_row: S.chainIntact ? null : 18, actions: acts, entries: entries.reverse() };
+    }
+
+    const J = (data, status) => new Response(JSON.stringify(data), { status: status || 200, headers: { "Content-Type": "application/json" } });
+    const realFetch = window.fetch.bind(window);
+
+    window.fetch = function (url, opt) {
+      const u = String(url);
+      if (!u.startsWith("/api/")) return realFetch(url, opt);
+      const body = opt && opt.body ? JSON.parse(opt.body) : {};
+      const delay = 40 + Math.random() * 60;
+      return new Promise(res => setTimeout(() => res(handle(u, (opt && opt.method) || "GET", body)), delay));
+    };
+
+    function handle(u, method, b) {
+      let m;
+      if (u === "/api/scale") return J(SCALE);
+      if (u === "/api/dashboard") return J(dashboard());
+      if (u === "/api/board") return J(active().map(boardRow).sort((x, y) => (x.status === "ARRIVED" ? -1 : 1) - (y.status === "ARRIVED" ? -1 : 1) || (x.level || 9) - (y.level || 9)));
+      if (u === "/api/encounters" && method === "GET") return J(Object.values(S.E).map(boardRow));
+      if ((m = u.match(/^\/api\/encounters\/(\d+)$/))) {
+        const e = S.E[+m[1]]; if (!e) return J({ error: "not found" }, 404);
+        return J({ encounter: { id: e.id, status: e.status, arrival_ts: iso(e.arrival_min), arrival_mode: e.arrival_mode, is_mlc: e.is_mlc, first_physician_at: e.first_physician_at, brought_by: e.brought_by, current_level: e.level },
+          patient: e.patient, triages: e.triages, mlc: e.mlc, intimations: e.intimations, disposition: e.disposition, intimation_pending: pendingIntim(e) });
+      }
+      if ((m = u.match(/^\/api\/encounters\/(\d+)\/attend$/)) && method === "POST") {
+        const e = S.E[+m[1]]; if (!e) return J({ error: "not found" }, 404);
+        e.first_physician_at = new Date().toISOString(); e.status = "IN_TREATMENT"; e.breach = false;
+        return J({ first_physician_at: e.first_physician_at });
+      }
+      if (u === "/api/quick-reg" && method === "POST") {
+        const id = S.nextId++; const temp = b.name ? null : ("T-2026-0" + (S.tempN++));
+        S.E[id] = { id, status: "ARRIVED", arrival_min: 0, arrival_mode: b.arrival_mode || "WALK_IN", is_mlc: false, mlc: null, intimations: [], disposition: null, first_physician_at: null, triages: [], chief: null, level: null, brought_by: b.brought_by,
+          patient: { name: b.name || null, temp_id: temp, uhid: b.name ? "UH-2026-0" + (4430 + id) : null, age_years: b.age_years, sex: b.sex || "UNKNOWN", phone: b.phone } };
+        return J({ encounter_id: id, temp_id: temp });
+      }
+      if (u === "/api/triage/suggest" && method === "POST") return J(suggest(b));
+      if (u === "/api/triage" && method === "POST") {
+        const e = S.E[b.encounter_id]; if (!e) return J({ error: "not found" }, 404);
+        const s = suggest(b); const fl = b.final_level || s.suggested_level;
+        if (fl !== s.suggested_level && !(b.override_reason || "").trim()) return J({ detail: "Override reason is mandatory when the final level differs from the suggestion." }, 422);
+        e.level = fl; e.status = "TRIAGED"; e.chief = b.chief_complaint; e.breach = false;
+        e.triages.unshift(Object.assign({ final_level: fl, suggested_level: s.suggested_level, triaged_ts: new Date().toISOString(), chief_complaint: b.chief_complaint, triaged_by: b.triaged_by, is_retriage: e.triages.length ? 1 : 0, override_reason: b.override_reason, red_flags: b.red_flags || [] }, b.vitals || {}));
+        return J({ final_level: fl, overridden: fl !== s.suggested_level });
+      }
+      if (u === "/api/mlc" && method === "GET") {
+        return J(Object.values(S.E).filter(e => e.mlc).map(e => ({ id: e.mlc.id, mlc_serial: e.mlc.mlc_serial, display_name: e.patient.name || ("[UNKNOWN] " + (e.patient.temp_id || "")), identifier: e.patient.uhid || e.patient.temp_id || "—", mlc_type: e.mlc.mlc_type, pocso_flag: e.mlc.pocso_flag, opened_ts: e.mlc.opened_ts, intimation_count: e.intimations.length })));
+      }
+      if (u === "/api/mlc" && method === "POST") {
+        const e = S.E[b.encounter_id]; if (!e) return J({ error: "not found" }, 404);
+        e.is_mlc = true; e.mlc = { id: 20 + b.encounter_id, mlc_serial: "MLC/2026/000" + (S.nextMlc++), mlc_type: b.mlc_type, pocso_flag: b.mlc_type === "SEXUAL_OFFENCE_POCSO" ? 1 : 0, opened_ts: new Date().toISOString(), opened_by: b.opened_by, status: "REGISTERED" };
+        return J({ mlc_serial: e.mlc.mlc_serial, warning: e.mlc.pocso_flag ? "POCSO mandatory reporting applies" : null });
+      }
+      if ((m = u.match(/^\/api\/mlc\/(\d+)$/)) && method === "GET") {
+        const e = Object.values(S.E).find(x => x.mlc && x.mlc.id === +m[1]); if (!e) return J({ error: "not found" }, 404);
+        return J({ mlc: e.mlc, encounter: { id: e.id }, patient: e.patient, intimations: e.intimations });
+      }
+      if ((m = u.match(/^\/api\/mlc\/(\d+)\/intimation$/)) && method === "POST") {
+        const e = Object.values(S.E).find(x => x.mlc && x.mlc.id === +m[1]); if (!e) return J({ error: "not found" }, 404);
+        e.intimations.push({ intimated_ts: new Date().toISOString(), mode: b.mode, police_station: b.police_station, constable_name: b.constable_name, constable_badge: b.constable_badge, logged_by: b.logged_by });
+        return J({ ok: true });
+      }
+      if (u === "/api/disposition" && method === "POST") {
+        const e = S.E[b.encounter_id]; if (!e) return J({ error: "not found" }, 404);
+        if (pendingIntim(e) && !b.mlc_warning_ack) return J({ detail: "MLC case has no police intimation logged (BNSS §194-196). Acknowledge with a justification to proceed — care is never blocked." }, 409);
+        e.status = "CLOSED";
+        e.disposition = { type: b.type, decided_ts: new Date().toISOString(), decided_by: b.decided_by, ward_requested: b.ward_requested, referral_facility: b.referral_facility, referral_reason: b.referral_reason, discharge_instr: b.discharge_instr, cause_of_death_icd10: b.cause_of_death_icd10, mlc_warning_ack: b.mlc_warning_ack, mlc_warning_reason: b.mlc_warning_reason };
+        return J({ ok: true });
+      }
+      if (u === "/api/audit") return J(auditEntries());
+      if (u === "/api/reports/overrides") return J([
+        { triaged_ts: iso(85), triaged_by: "N. Priya (Triage Nurse)", identifier: "UH-2026-04424", suggested_level: 3, final_level: 4, direction: "DOWNGRADED", override_reason: "Bleeding controlled, distal pulses intact; suitable for suture room queue." },
+        { triaged_ts: iso(2110), triaged_by: "N. Priya (Triage Nurse)", identifier: "UH-2026-04361", suggested_level: 3, final_level: 2, direction: "UPGRADED", override_reason: "Looks toxic despite stable vitals; sepsis suspicion — senior review requested." },
+        { triaged_ts: iso(5300), triaged_by: "R. Divya (Triage Nurse)", identifier: "UH-2026-04102", suggested_level: 2, final_level: 3, direction: "DOWNGRADED", override_reason: "Chest pain reproducible on palpation, ECG normal, prior musculoskeletal dx." },
+      ]);
+      if (u === "/api/demo/reset" && method === "POST") { S = seedStore(); return J({ ok: true }); }
+      return J({ error: "not stubbed: " + u }, 404);
+    }
+  })();
+  </script>
+</head>
+<body>
+  <!-- signature "Vitals Field" — THE LIVING WARD (static frame under prefers-reduced-motion) -->
+  <canvas class="labfield" id="lab" aria-hidden="true"></canvas>
+
+  <div id="app" class="app" aria-busy="true"></div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+  <div id="overlay-root"></div>
+
+  <div aria-hidden="true" style="position:fixed;right:14px;bottom:12px;z-index:4;pointer-events:none;font:10px/1.4 'Roboto Mono',ui-monospace,monospace;letter-spacing:.08em;color:#5f6d68">PREVIEW HARNESS · STUBBED API · REAL PRODUCT: python app.py</div>
+
+  <template id="__bundler_thumbnail" data-bg-color="#1c2220">
+    <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+      <rect width="1200" height="800" fill="#1c2220"/>
+      <g fill="none" stroke="#cef79e" stroke-opacity="0.5" stroke-width="3">
+        <path d="M470 120 C 700 220, 700 340, 470 440 C 240 540, 240 660, 470 760"/>
+        <path d="M730 120 C 500 220, 500 340, 730 440 C 960 540, 960 660, 730 760"/>
+      </g>
+      <g stroke="#5a6b5f" stroke-opacity="0.55" stroke-width="2">
+        <line x1="486" y1="180" x2="714" y2="180"/><line x1="560" y1="300" x2="640" y2="300"/>
+        <line x1="486" y1="440" x2="714" y2="440"/><line x1="560" y1="580" x2="640" y2="580"/>
+        <line x1="486" y1="700" x2="714" y2="700"/>
+      </g>
+      <circle cx="600" cy="300" r="30" fill="#d94436"/>
+      <circle cx="486" cy="440" r="20" fill="#e07a3c"/>
+      <circle cx="714" cy="440" r="16" fill="#d9b23f"/>
+      <circle cx="600" cy="580" r="18" fill="#78c07a"/>
+      <circle cx="470" cy="760" r="13" fill="#f5f6f1" fill-opacity="0.85"/>
+      <circle cx="730" cy="120" r="13" fill="#cef79e"/>
+    </svg>
+  </template>
+
+  <script src="static/js/lab.js"></script>
+  <script src="static/js/app.js"></script>
+</body>
+</html>

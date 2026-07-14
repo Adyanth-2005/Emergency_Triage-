@@ -1,0 +1,800 @@
+"""
+P5 — Emergency Triage: walking skeleton (M2 deliverable).
+
+"App boots, 1 end-to-end flow stubbed" is the M2 bar. This clears it:
+the unknown-patient -> triage -> MLC -> intimation -> disposition path
+runs end to end. Screens are M3 work; the routes and the invariants are
+frozen here.
+
+Run:  python app.py   ->  http://127.0.0.1:5000
+"""
+
+import hashlib
+import json
+import sqlite3
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+from flask import Flask, g, jsonify, render_template, request, send_from_directory
+
+import triage_rules
+
+HERE = Path(__file__).parent
+DB_PATH = HERE / "ed.db"
+app = Flask(__name__, template_folder="templates", static_folder="static")
+
+
+# ---------------------------------------------------------------------
+# DB plumbing
+# ---------------------------------------------------------------------
+def _ensure_columns(conn):
+    """
+    Additive, idempotent migration. M2 froze `ed_encounter` without a
+    door-to-doctor stamp; M3's tracking board and KPI tiles need one. We add
+    it with ALTER TABLE ... ADD COLUMN, which never rewrites or drops data —
+    the completed M2 database keeps every row it already had.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(ed_encounter)")}
+    if "first_physician_at" not in cols:
+        conn.execute("ALTER TABLE ed_encounter ADD COLUMN first_physician_at TEXT")
+    if "attended_by" not in cols:
+        conn.execute("ALTER TABLE ed_encounter ADD COLUMN attended_by TEXT")
+    conn.commit()
+
+
+def db():
+    if "db" not in g:
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA foreign_keys = ON")
+        _ensure_columns(g.db)
+    return g.db
+
+
+@app.teardown_appcontext
+def close_db(_exc):
+    conn = g.pop("db", None)
+    if conn is not None:
+        conn.close()
+
+
+def now():
+    """
+    Server-side UTC, always. Client clocks are never trusted.
+
+    PRD-05 §7: "Every timestamp medico-legally defensible (NTP-synced
+    clocks)". A timestamp a court will accept cannot come from a tablet
+    whose owner can change the date in Settings.
+    """
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# ---------------------------------------------------------------------
+# Hash-chained audit log — PRD-05 §7 "MLC records tamper-evident"
+# ---------------------------------------------------------------------
+GENESIS = "0" * 64
+
+
+def audit(conn, actor, action, entity, entity_id, detail=None):
+    """
+    Append one link to the chain.
+
+    row_hash = SHA256(prev_hash || canonical_json(payload))
+
+    Editing any historical row breaks every hash after it. That is the
+    whole trick — we cannot stop a DBA with write access from altering a
+    row, but we can guarantee that doing so is *detectable*, which is
+    what "tamper-evident" means and all it has ever meant.
+    """
+    prev = conn.execute(
+        "SELECT row_hash FROM audit_log ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    prev_hash = prev["row_hash"] if prev else GENESIS
+
+    payload = {
+        "ts": now(),
+        "actor": actor,
+        "action": action,
+        "entity": entity,
+        "entity_id": entity_id,
+        "detail": detail or {},
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    row_hash = hashlib.sha256((prev_hash + canonical).encode()).hexdigest()
+
+    conn.execute(
+        """INSERT INTO audit_log
+           (ts, actor, action, entity, entity_id, detail_json, prev_hash, row_hash)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (payload["ts"], actor, action, entity, entity_id,
+         json.dumps(payload["detail"], sort_keys=True), prev_hash, row_hash),
+    )
+    return row_hash
+
+
+def verify_chain(conn):
+    """Recompute every link. Returns (ok, first_broken_id_or_None)."""
+    prev_hash = GENESIS
+    for row in conn.execute("SELECT * FROM audit_log ORDER BY id"):
+        payload = {
+            "ts": row["ts"],
+            "actor": row["actor"],
+            "action": row["action"],
+            "entity": row["entity"],
+            "entity_id": row["entity_id"],
+            "detail": json.loads(row["detail_json"]),
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        expect = hashlib.sha256((prev_hash + canonical).encode()).hexdigest()
+        if expect != row["row_hash"] or row["prev_hash"] != prev_hash:
+            return False, row["id"]
+        prev_hash = row["row_hash"]
+    return True, None
+
+
+# ---------------------------------------------------------------------
+# Gapless MLC serial allocation — BNSS 2023 §194-196
+# ---------------------------------------------------------------------
+def next_mlc_serial(conn, year):
+    """
+    Allocate the next MLC serial. Gapless, atomic, never reused.
+
+    A statutory register with a hole in it invites exactly one question in
+    court: what was in entry 0043, and who removed it? So the counter is a
+    single atomic UPDATE inside the caller's transaction rather than a racy
+    SELECT MAX(seq)+1. Two nurses triaging simultaneously at 3 a.m. cannot
+    collide, and a rolled-back encounter cannot burn a serial.
+    """
+    conn.execute(
+        "INSERT INTO mlc_counter(year, last_seq) VALUES (?, 0) "
+        "ON CONFLICT(year) DO NOTHING",
+        (year,),
+    )
+    conn.execute(
+        "UPDATE mlc_counter SET last_seq = last_seq + 1 WHERE year = ?", (year,)
+    )
+    seq = conn.execute(
+        "SELECT last_seq FROM mlc_counter WHERE year = ?", (year,)
+    ).fetchone()["last_seq"]
+    return f"MLC/{year}/{seq:04d}", seq
+
+
+# =====================================================================
+# ROUTES
+# =====================================================================
+
+@app.get("/api/health")
+def health():
+    ok, broken = verify_chain(db())
+    return jsonify({
+        "status": "ok",
+        "audit_chain_intact": ok,
+        "first_broken_row": broken,
+    })
+
+
+# --- FR-2 : Quick registration ---------------------------------------
+@app.post("/api/quick-reg")
+def quick_reg():
+    """
+    Treat-first registration. Art. 21 + Parmanand Katara (SC 1989).
+
+    ZERO mandatory fields. An empty POST body is valid and MUST succeed —
+    that is not a bug to be hardened away, it is the requirement. The
+    unconscious RTA victim with no attender gets a temp ID and a triage
+    slot, and the paperwork catches up later or never.
+    """
+    body = request.get_json(silent=True) or {}
+    conn = db()
+    ts = now()
+    year = datetime.now(timezone.utc).year
+
+    is_unknown = not body.get("name")
+
+    temp_id = None
+    if is_unknown or not body.get("uhid"):
+        n = conn.execute(
+            "SELECT COUNT(*) c FROM patient WHERE temp_id LIKE ?", (f"TMP-{year}-%",)
+        ).fetchone()["c"]
+        temp_id = f"TMP-{year}-{n + 1:04d}"
+
+    cur = conn.execute(
+        """INSERT INTO patient
+           (uhid, temp_id, name, age_years, sex, phone, is_unknown, created_at)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (body.get("uhid"), temp_id, body.get("name"), body.get("age_years"),
+         body.get("sex"), body.get("phone"), 1 if is_unknown else 0, ts),
+    )
+    patient_id = cur.lastrowid
+
+    cur = conn.execute(
+        """INSERT INTO ed_encounter
+           (patient_id, arrival_ts, arrival_mode, brought_by, status)
+           VALUES (?,?,?,?, 'ARRIVED')""",
+        (patient_id, ts, body.get("arrival_mode"), body.get("brought_by")),
+    )
+    encounter_id = cur.lastrowid
+
+    audit(conn, body.get("actor", "system"), "QUICK_REG", "ed_encounter",
+          encounter_id, {"is_unknown": is_unknown, "temp_id": temp_id})
+    conn.commit()
+
+    return jsonify({
+        "patient_id": patient_id,
+        "encounter_id": encounter_id,
+        "temp_id": temp_id,
+        "is_unknown": is_unknown,
+    }), 201
+
+
+# --- FR-1 : Triage ----------------------------------------------------
+@app.post("/api/triage/suggest")
+def triage_suggest():
+    """Dry-run the rules engine. Suggests; never writes; never decides."""
+    body = request.get_json(silent=True) or {}
+    return jsonify(triage_rules.evaluate(
+        vitals=body.get("vitals", {}),
+        red_flags=body.get("red_flags", []),
+    ))
+
+
+@app.post("/api/triage")
+def triage_commit():
+    """
+    Commit a triage. The nurse's final_level is authoritative.
+
+    If they depart from the suggestion, the reason is mandatory — enforced
+    in the schema (triage_event CHECK), not merely in the UI. A validation
+    rule that lives only in JavaScript is a validation rule that a curl
+    command deletes.
+    """
+    body = request.get_json(silent=True) or {}
+    encounter_id = body["encounter_id"]
+    vitals = body.get("vitals", {})
+    red_flags = body.get("red_flags", [])
+    triaged_by = body.get("triaged_by", "unknown_nurse")
+
+    result = triage_rules.evaluate(vitals=vitals, red_flags=red_flags)
+    suggested = result["suggested_level"]
+    final = body.get("final_level", suggested)
+    reason = body.get("override_reason")
+
+    if final != suggested and (not reason or len(reason.strip()) < 10):
+        return jsonify({
+            "error": "override_reason_required",
+            "detail": ("Departing from the suggested level requires a recorded "
+                       "reason of at least 10 characters. PRD-05 §11: overrides "
+                       "are reported to the medical director monthly."),
+            "suggested_level": suggested,
+        }), 422
+
+    conn = db()
+    cur = conn.execute(
+        """INSERT INTO triage_event
+           (encounter_id, triaged_ts, chief_complaint, hr, rr, sbp, dbp,
+            spo2, temp_c, gcs, red_flags_json, suggested_level, final_level,
+            override_reason, triaged_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (encounter_id, now(), body.get("chief_complaint", ""),
+         vitals.get("hr"), vitals.get("rr"), vitals.get("sbp"), vitals.get("dbp"),
+         vitals.get("spo2"), vitals.get("temp_c"), vitals.get("gcs"),
+         json.dumps(red_flags), suggested, final, reason, triaged_by),
+    )
+    triage_id = cur.lastrowid
+    conn.execute(
+        "UPDATE ed_encounter SET status='TRIAGED' WHERE id=? AND status='ARRIVED'",
+        (encounter_id,),
+    )
+
+    if final != suggested:
+        audit(conn, triaged_by, "TRIAGE_OVERRIDE", "triage_event", triage_id,
+              {"suggested": suggested, "final": final, "reason": reason,
+               "direction": "DOWNGRADED" if final > suggested else "UPGRADED"})
+    else:
+        audit(conn, triaged_by, "TRIAGE", "triage_event", triage_id,
+              {"level": final})
+    conn.commit()
+
+    return jsonify({
+        "triage_id": triage_id,
+        "suggested_level": suggested,
+        "final_level": final,
+        "overridden": final != suggested,
+        "reasons": result["reasons"],
+    }), 201
+
+
+# --- FR-4 : MLC -------------------------------------------------------
+@app.post("/api/mlc")
+def open_mlc():
+    """Open an MLC. Allocates a gapless statutory serial."""
+    body = request.get_json(silent=True) or {}
+    encounter_id = body["encounter_id"]
+    mlc_type = body["mlc_type"]
+    opened_by = body.get("opened_by", "unknown_cmo")
+    year = datetime.now(timezone.utc).year
+
+    conn = db()
+    serial, seq = next_mlc_serial(conn, year)
+
+    # POCSO §19-21: non-reporting is itself an offence. The flag is set at
+    # open time and cannot be cleared through this API — there is no
+    # endpoint to unset it, by design.
+    pocso = 1 if mlc_type == "SEXUAL_OFFENCE_POCSO" else 0
+
+    cur = conn.execute(
+        """INSERT INTO mlc_case
+           (encounter_id, mlc_serial, mlc_year, mlc_seq, mlc_type,
+            pocso_flag, opened_ts, opened_by)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (encounter_id, serial, year, seq, mlc_type, pocso, now(), opened_by),
+    )
+    mlc_id = cur.lastrowid
+    conn.execute("UPDATE ed_encounter SET is_mlc=1 WHERE id=?", (encounter_id,))
+
+    audit(conn, opened_by, "MLC_OPEN", "mlc_case", mlc_id,
+          {"serial": serial, "type": mlc_type, "pocso": bool(pocso)})
+    conn.commit()
+
+    return jsonify({
+        "mlc_id": mlc_id,
+        "mlc_serial": serial,
+        "pocso_flag": bool(pocso),
+        "statutory_basis": "BNSS 2023 §194-196",
+        "warning": ("POCSO §19-21: reporting to SJPU/police is mandatory and "
+                    "non-reporting is punishable.") if pocso else None,
+    }), 201
+
+
+@app.post("/api/mlc/<int:mlc_id>/intimation")
+def log_intimation(mlc_id):
+    """
+    Record the police intimation. This IS the statutory evidence.
+
+    PRD-05 §13, absent a state e-portal: "statutory duty met manually,
+    evidenced digitally." The constable's name and badge are mandatory
+    because "we informed the police" is not a defence — "we informed
+    Constable Ramesh, badge 4471, by phone at 03:14" is.
+    """
+    body = request.get_json(silent=True) or {}
+    conn = db()
+    cur = conn.execute(
+        """INSERT INTO police_intimation
+           (mlc_case_id, intimated_ts, police_station, constable_name,
+            constable_badge, mode, ack_ref, logged_by)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (mlc_id, body.get("intimated_ts", now()), body["police_station"],
+         body["constable_name"], body["constable_badge"], body["mode"],
+         body.get("ack_ref"), body.get("logged_by", "unknown_cmo")),
+    )
+    intimation_id = cur.lastrowid
+    audit(conn, body.get("logged_by", "unknown_cmo"), "INTIMATION_LOG",
+          "police_intimation", intimation_id,
+          {"mlc_case_id": mlc_id, "mode": body["mode"]})
+    conn.commit()
+    return jsonify({"intimation_id": intimation_id}), 201
+
+
+# --- FR-8 : Dispositions ---------------------------------------------
+@app.post("/api/disposition")
+def disposition():
+    """
+    Close the encounter.
+
+    US-6 / the compliance showpiece: if this encounter is an MLC and no
+    police intimation has been logged, we WARN — hard, with the statute
+    cited — and require a recorded justification to proceed.
+
+    We warn rather than block. Blocking a disposition would mean the
+    software holds a patient in the ED to protect its own compliance
+    record, which inverts the entire point: Art. 21 says care is never
+    delayed by police formalities. So the patient always leaves. The
+    silence just goes on the record with a name attached to it.
+    """
+    body = request.get_json(silent=True) or {}
+    encounter_id = body["encounter_id"]
+    dtype = body["type"]
+    decided_by = body.get("decided_by", "unknown_physician")
+
+    conn = db()
+    enc = conn.execute(
+        "SELECT * FROM ed_encounter WHERE id=?", (encounter_id,)
+    ).fetchone()
+    if enc is None:
+        return jsonify({"error": "encounter_not_found"}), 404
+
+    intimation_pending = False
+    if enc["is_mlc"]:
+        n = conn.execute(
+            """SELECT COUNT(*) c FROM police_intimation pi
+               JOIN mlc_case m ON m.id = pi.mlc_case_id
+               WHERE m.encounter_id = ?""",
+            (encounter_id,),
+        ).fetchone()["c"]
+        intimation_pending = (n == 0)
+
+    ack = 1 if body.get("mlc_warning_ack") else 0
+    ack_reason = body.get("mlc_warning_reason")
+
+    if intimation_pending and not (ack and ack_reason and len(ack_reason.strip()) >= 10):
+        return jsonify({
+            "error": "mlc_intimation_pending",
+            "statutory_basis": "BNSS 2023 §194-196",
+            "detail": ("This is an MLC encounter with no police intimation "
+                       "logged. Log the intimation, or acknowledge and record "
+                       "a justification (min. 10 chars) to proceed."),
+            "blocking": False,
+        }), 409
+
+    conn.execute(
+        """INSERT INTO disposition
+           (encounter_id, type, decided_ts, decided_by, ward_requested,
+            referral_facility, referral_reason, discharge_instr,
+            lama_counselled_by, lama_risks_explained, lama_witness,
+            death_ts, cause_of_death_icd10, mccd_form4_ref,
+            mlc_warning_ack, mlc_warning_reason)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (encounter_id, dtype, now(), decided_by, body.get("ward_requested"),
+         body.get("referral_facility"), body.get("referral_reason"),
+         body.get("discharge_instr"), body.get("lama_counselled_by"),
+         body.get("lama_risks_explained"), body.get("lama_witness"),
+         body.get("death_ts"), body.get("cause_of_death_icd10"),
+         body.get("mccd_form4_ref"), ack, ack_reason),
+    )
+    conn.execute(
+        "UPDATE ed_encounter SET status='CLOSED', closed_ts=? WHERE id=?",
+        (now(), encounter_id),
+    )
+    audit(conn, decided_by, "DISPOSITION", "ed_encounter", encounter_id,
+          {"type": dtype, "mlc_warning_ack": bool(ack)})
+    conn.commit()
+
+    stub = None
+    if dtype == "ADMIT":
+        # PRD-02 is a 🟡 dependency. Fallback per PRD-05 §13:
+        # "phone-based admission continues".
+        stub = {"bed_request": "STUBBED -> PRD-02",
+                "ward": body.get("ward_requested")}
+
+    return jsonify({"encounter_id": encounter_id, "type": dtype,
+                    "stub": stub}), 201
+
+
+# --- Read models ------------------------------------------------------
+@app.get("/api/board")
+def board():
+    rows = db().execute(
+        "SELECT * FROM v_tracking_board WHERE status <> 'CLOSED' "
+        "ORDER BY level, arrival_ts"
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.get("/api/reports/overrides")
+def overrides():
+    """PRD-05 §11: overrides reported to the medical director monthly."""
+    rows = db().execute("SELECT * FROM v_override_report").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.get("/api/audit/verify")
+def audit_verify():
+    ok, broken = verify_chain(db())
+    return jsonify({"chain_intact": ok, "first_broken_row": broken})
+
+
+# --- FR-3 : Physician attends (door-to-doctor) -----------------------
+@app.post("/api/encounters/<int:encounter_id>/attend")
+def attend(encounter_id):
+    """
+    A physician picks up the patient. Stamps door-to-doctor server-side and
+    moves the encounter to IN_TREATMENT. The stamp is only set once — the
+    NABH time-norm is *first* physician contact, so a second attend never
+    overwrites it.
+    """
+    body = request.get_json(silent=True) or {}
+    who = body.get("attended_by", "unknown_physician")
+    conn = db()
+    enc = conn.execute(
+        "SELECT * FROM ed_encounter WHERE id=?", (encounter_id,)
+    ).fetchone()
+    if enc is None:
+        return jsonify({"error": "encounter_not_found"}), 404
+    if enc["status"] == "CLOSED":
+        return jsonify({"error": "encounter_closed"}), 409
+
+    ts = now()
+    conn.execute(
+        """UPDATE ed_encounter
+           SET status='IN_TREATMENT',
+               first_physician_at = COALESCE(first_physician_at, ?),
+               attended_by        = COALESCE(attended_by, ?)
+           WHERE id=?""",
+        (ts, who, encounter_id),
+    )
+    audit(conn, who, "PHYSICIAN_ATTEND", "ed_encounter", encounter_id,
+          {"door_to_doctor_at": ts})
+    conn.commit()
+    return jsonify({"encounter_id": encounter_id, "first_physician_at": ts,
+                    "status": "IN_TREATMENT"}), 200
+
+
+# --- Read models the console renders ---------------------------------
+def _patient_dict(conn, patient_id):
+    p = conn.execute("SELECT * FROM patient WHERE id=?", (patient_id,)).fetchone()
+    return dict(p) if p else None
+
+
+@app.get("/api/encounters")
+def list_encounters():
+    """ED register — filtered encounter list (newest first, capped)."""
+    conn = db()
+    q = (request.args.get("q") or "").strip().lower()
+    level = request.args.get("level")
+    mlc = request.args.get("mlc")
+    status = request.args.get("status")
+    rows = conn.execute("SELECT * FROM v_tracking_board ORDER BY arrival_ts DESC").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        if q and q not in (str(d.get("display_name") or "").lower()
+                           + " " + str(d.get("identifier") or "").lower()
+                           + " " + str(d.get("chief_complaint") or "").lower()):
+            continue
+        if level and str(d.get("level")) != str(level):
+            continue
+        if mlc == "1" and not d.get("is_mlc"):
+            continue
+        if status and d.get("status") != status:
+            continue
+        out.append(d)
+    return jsonify(out[:200])
+
+
+@app.get("/api/encounters/<int:encounter_id>")
+def encounter_detail(encounter_id):
+    """The encounter hub: patient, triage history, MLC + intimations, disposition."""
+    conn = db()
+    enc = conn.execute(
+        "SELECT * FROM ed_encounter WHERE id=?", (encounter_id,)
+    ).fetchone()
+    if enc is None:
+        return jsonify({"error": "encounter_not_found"}), 404
+    enc = dict(enc)
+    patient = _patient_dict(conn, enc["patient_id"])
+    triages = [dict(r) for r in conn.execute(
+        "SELECT * FROM triage_event WHERE encounter_id=? ORDER BY triaged_ts DESC",
+        (encounter_id,))]
+    for t in triages:
+        try:
+            t["red_flags"] = json.loads(t.get("red_flags_json") or "[]")
+        except (ValueError, TypeError):
+            t["red_flags"] = []
+
+    mlc = conn.execute(
+        "SELECT * FROM mlc_case WHERE encounter_id=?", (encounter_id,)
+    ).fetchone()
+    mlc = dict(mlc) if mlc else None
+    intimations = []
+    if mlc:
+        intimations = [dict(r) for r in conn.execute(
+            "SELECT * FROM police_intimation WHERE mlc_case_id=? ORDER BY intimated_ts",
+            (mlc["id"],))]
+
+    disp = conn.execute(
+        "SELECT * FROM disposition WHERE encounter_id=?", (encounter_id,)
+    ).fetchone()
+
+    intimation_pending = bool(enc["is_mlc"]) and len(intimations) == 0
+
+    return jsonify({
+        "encounter": enc,
+        "patient": patient,
+        "triages": triages,
+        "mlc": mlc,
+        "intimations": intimations,
+        "disposition": dict(disp) if disp else None,
+        "intimation_pending": intimation_pending,
+    })
+
+
+@app.get("/api/mlc")
+def list_mlc():
+    """MLC register — all cases, newest first, with intimation counts."""
+    conn = db()
+    rows = conn.execute(
+        """SELECT m.*, e.status AS enc_status,
+                  COALESCE(p.name, '[UNKNOWN] ' || p.temp_id) AS display_name,
+                  COALESCE(p.uhid, p.temp_id) AS identifier,
+                  (SELECT COUNT(*) FROM police_intimation pi
+                     WHERE pi.mlc_case_id = m.id) AS intimation_count
+           FROM mlc_case m
+           JOIN ed_encounter e ON e.id = m.encounter_id
+           JOIN patient p      ON p.id = e.patient_id
+           ORDER BY m.opened_ts DESC"""
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.get("/api/mlc/<int:mlc_id>")
+def mlc_detail(mlc_id):
+    conn = db()
+    m = conn.execute("SELECT * FROM mlc_case WHERE id=?", (mlc_id,)).fetchone()
+    if m is None:
+        return jsonify({"error": "mlc_not_found"}), 404
+    m = dict(m)
+    enc = conn.execute(
+        "SELECT * FROM ed_encounter WHERE id=?", (m["encounter_id"],)
+    ).fetchone()
+    patient = _patient_dict(conn, enc["patient_id"]) if enc else None
+    intimations = [dict(r) for r in conn.execute(
+        "SELECT * FROM police_intimation WHERE mlc_case_id=? ORDER BY intimated_ts",
+        (mlc_id,))]
+    return jsonify({
+        "mlc": m,
+        "encounter": dict(enc) if enc else None,
+        "patient": patient,
+        "intimations": intimations,
+    })
+
+
+@app.get("/api/audit")
+def list_audit():
+    """Audit trail (≤300 newest) plus a live hash-chain verdict."""
+    conn = db()
+    action = request.args.get("action")
+    q = (request.args.get("q") or "").strip().lower()
+    rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT 300").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        if action and d["action"] != action:
+            continue
+        if q and q not in json.dumps(d).lower():
+            continue
+        out.append(d)
+    ok, broken = verify_chain(conn)
+    actions = [r["action"] for r in conn.execute(
+        "SELECT DISTINCT action FROM audit_log ORDER BY action")]
+    return jsonify({"entries": out, "chain_intact": ok,
+                    "first_broken_row": broken, "actions": actions})
+
+
+@app.get("/api/scale")
+def scale():
+    """The active triage scale — level labels, colours, targets, red flags."""
+    conn = db()
+    rows = conn.execute(
+        "SELECT * FROM triage_scale_config WHERE active=1 ORDER BY level"
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["criteria"] = json.loads(d.pop("criteria_json"))
+        except (ValueError, TypeError):
+            d["criteria"] = {}
+        out.append(d)
+    return jsonify(out)
+
+
+@app.get("/api/dashboard")
+def dashboard():
+    """Operational KPIs, computed from data — no hardcoded numbers."""
+    conn = db()
+
+    def scalar(sql, args=()):
+        return conn.execute(sql, args).fetchone()[0]
+
+    board = [dict(r) for r in conn.execute(
+        "SELECT * FROM v_tracking_board WHERE status <> 'CLOSED'")]
+    active = len(board)
+    awaiting_triage = sum(1 for b in board if b["status"] == "ARRIVED")
+    awaiting_phys = sum(1 for b in board if b["status"] == "TRIAGED")
+    in_treatment = sum(1 for b in board if b["status"] == "IN_TREATMENT")
+    breaches = sum(1 for b in board if b["is_breached"])
+    mlc_active = sum(1 for b in board if b["is_mlc"])
+
+    level_mix = {str(i): 0 for i in range(1, 6)}
+    for b in board:
+        if b["level"]:
+            level_mix[str(b["level"])] += 1
+
+    disp_rows = conn.execute(
+        "SELECT type, COUNT(*) c FROM disposition GROUP BY type").fetchall()
+    disp_mix = {r["type"]: r["c"] for r in disp_rows}
+
+    # Door-to-doctor: median minutes over encounters that have been attended.
+    d2d = [r["m"] for r in conn.execute(
+        """SELECT CAST((julianday(first_physician_at) - julianday(arrival_ts))
+                       * 1440 AS INTEGER) m
+           FROM ed_encounter
+           WHERE first_physician_at IS NOT NULL""")]
+    d2d_median = None
+    if d2d:
+        d2d.sort()
+        mid = len(d2d) // 2
+        d2d_median = d2d[mid] if len(d2d) % 2 else (d2d[mid - 1] + d2d[mid]) / 2
+
+    total_patients = scalar("SELECT COUNT(*) FROM patient")
+    total_encounters = scalar("SELECT COUNT(*) FROM ed_encounter")
+    unknown_active = sum(1 for b in board if b["is_unknown"])
+    overrides = scalar("SELECT COUNT(*) FROM triage_event WHERE override_reason IS NOT NULL")
+    intimation_pending = scalar(
+        """SELECT COUNT(*) FROM mlc_case m
+           JOIN ed_encounter e ON e.id = m.encounter_id
+           WHERE e.status <> 'CLOSED'
+             AND NOT EXISTS (SELECT 1 FROM police_intimation pi
+                             WHERE pi.mlc_case_id = m.id)""")
+    ok, broken = verify_chain(conn)
+
+    return jsonify({
+        "active_encounters": active,
+        "awaiting_triage": awaiting_triage,
+        "awaiting_physician": awaiting_phys,
+        "in_treatment": in_treatment,
+        "breaches": breaches,
+        "mlc_active": mlc_active,
+        "unknown_active": unknown_active,
+        "level_mix": level_mix,
+        "disposition_mix": disp_mix,
+        "door_to_doctor_median_min": d2d_median,
+        "total_patients": total_patients,
+        "total_encounters": total_encounters,
+        "overrides": overrides,
+        "intimation_pending": intimation_pending,
+        "audit_chain_intact": ok,
+        "audit_first_broken_row": broken,
+        "generated_at": now(),
+    })
+
+
+# --- Demo controls (dev/demo only) -----------------------------------
+@app.post("/api/demo/reset")
+def demo_reset():
+    """
+    Rebuild the deterministic demo database. Guarded: only runs when the app
+    is in debug mode, so it can never wipe a production database by accident.
+    """
+    if not app.debug:
+        return jsonify({"error": "demo_reset_disabled",
+                        "detail": "Demo reset only runs in debug/demo mode."}), 403
+    conn = g.pop("db", None)
+    if conn is not None:
+        conn.close()
+    subprocess.run([sys.executable, str(HERE / "seed.py")], check=True, cwd=HERE)
+    return jsonify({"status": "reseeded"}), 200
+
+
+# --- SPA shell --------------------------------------------------------
+@app.get("/")
+def index():
+    """
+    THE LIVING WARD — the design-handoff exact replica (preview.html).
+
+    Served verbatim from the repo root. It is fully self-contained: an inline
+    deterministic API stub drives the console with demo data, so `/` renders
+    the complete experience with no database. The live, backend-wired product
+    remains reachable at /console.
+    """
+    return send_from_directory(HERE, "preview.html")
+
+
+@app.get("/console")
+def console():
+    """The live, backend-wired SPA (hits the real Flask API + SQLite)."""
+    return render_template("index.html")
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return send_from_directory(app.static_folder, "favicon.svg",
+                               mimetype="image/svg+xml")
+
+
+if __name__ == "__main__":
+    if not DB_PATH.exists():
+        print("No ed.db found. Run:  python seed.py")
+    app.run(debug=True, port=5000)
