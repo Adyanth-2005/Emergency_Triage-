@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🏥 ED Triage Console — **The Living Ward**
+# ED Triage Console — **The Living Ward**
 
 ### P5 · Emergency Department Triage & Medico‑Legal Workflow (PRD‑05)
 
