@@ -103,8 +103,16 @@ python test_m3.py      # M3 flows / read models (26)
 **74 checks, all passing.**
 
 ## Docs
-`INSTRUCTIONS.md` · `TECH_STACK.md` · `docs/DEPLOYMENT.md` · `docs/ADVANCED_RAG.md` ·
-`docs/ARCHITECTURE.md` · `docs/COMPLIANCE.md` · `docs/KNOWN_GAPS.md`
+
+- [INSTRUCTIONS.md](INSTRUCTIONS.md) — setup & run (local full‑AI stack **+** Vercel)
+- [TECH_STACK.md](TECH_STACK.md) — architecture & technology choices
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Vercel demo **+** persistent (Turso) deploy
+- [docs/ADVANCED_RAG.md](docs/ADVANCED_RAG.md) — the adaptive Advanced‑RAG pipeline
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system, ERD & workflow diagrams
+- [docs/COMPLIANCE.md](docs/COMPLIANCE.md) — statutory & clinical compliance mapping
+- [docs/KNOWN_GAPS.md](docs/KNOWN_GAPS.md) — honest limitations & roadmap
+
+<sub>More: [AI_ADVISORY](docs/AI_ADVISORY.md) · [DEMO_SCRIPT](docs/DEMO_SCRIPT.md) · [DESIGN_SKIN](docs/DESIGN_SKIN.md) · [FINAL_VERIFICATION](docs/FINAL_VERIFICATION.md) · [M2_COMPLETION](docs/M2_COMPLETION.md) · [M3_COMPLETION](docs/M3_COMPLETION.md) · [REPOSITORY_AUDIT](docs/REPOSITORY_AUDIT.md)</sub>
 
 ## License
 MIT. All patient data is synthetic; no real personal data is used.
