@@ -1,7 +1,7 @@
 # M4 Report — P5: Emergency Department Triage & Medico‑Legal Workflow
 
 **Milestone:** M4 (Demo + Viva, 16 Jul) · **Updated:** 15 Jul 2026 ·
-**Graded scope:** FR‑1, 2, 4, 8 (✅ complete) · **Extension shipped:** FR‑3, 5, 6, 7, 9, 10, 11, 13, 14 + AI‑2/3/4/5 ·
+**Graded scope:** FR‑1, 2, 4, 8 ( complete) · **Extension shipped:** FR‑3, 5, 6, 7, 9, 10, 11, 13, 14 + AI‑2/3/4/5 ·
 **Repo:** github.com/Adyanth-2005/Emergency_Triage- · **Live:** ed‑triage‑snowy.vercel.app
 
 ## 1. What it is (in two lines)
