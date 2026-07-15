@@ -18,12 +18,12 @@ tamper‑evident audit chain, and an optional local Advanced‑RAG AI copilot. A
 | FR‑2 | Quick registration — treat‑first: empty POST succeeds, temp ID issued, nothing blocks care | Done | `POST /api/quick-reg` · `test_e2e` §1 |
 | FR‑3 | ED tracking board — acuity, elapsed time, breach flags; door‑to‑doctor via `/attend`; bay allocation | Done | `GET /api/board`, `POST /attend`, `/bay` · `test_m3` §5 |
 | FR‑4 | MLC module — gapless `MLC/YYYY/nnnn` serial (atomic counter), police‑intimation log (officer/badge/mode), POCSO non‑dismissible flag | Done | `POST /api/mlc`, `/intimation` · `test_e2e` §5 |
-| FR‑5 | Injury documentation — body‑region + wound‑type templates, description, photo‑consent flag + photo reference | Done | `POST /api/encounters/<id>/injury` · `test_fr` |
+| FR‑5 | Injury documentation — body‑region + wound‑type templates, description, photo‑consent flag + photo reference | ◐ | `POST /api/encounters/<id>/injury` · `test_fr` |
 | FR‑6 | Evidence chain‑of‑custody — item, collector, handed‑to officer/badge, signature ref; audited | Done | `POST /api/mlc/<id>/evidence` · `test_fr` |
 | FR‑7 | Mandatory‑reporting engine — POCSO/IDSP/burns/poisoning matrix with statute citations; acknowledge requires recorded reason | Done | `reporting.py`, `/reporting`, `/reporting/ack` · `test_fr` |
 | FR‑8 | Dispositions — all 6 types (Admit→PRD‑02 stub, Refer, Discharge, LAMA, DOR, Death/Brought‑dead with Form 4/4A + ICD‑10), per‑type mandatory fields via `CHECK`; US‑6 warn‑not‑block | Done | `POST /api/disposition` · `test_e2e` §6–8 |
 | FR‑9 | Pre‑arrival intake — ambulance notification create/close, code activation | Done | `GET/POST /api/prearrival` · `test_fr` |
-| FR‑10 | MCI/disaster mode — batch triage‑tag registration (Red/Yellow/Green/Black), MCI list | Done | `POST /api/mci/register`, `GET /api/mci` · `test_fr` |
+| FR‑10 | MCI/disaster mode — batch triage‑tag registration (Red/Yellow/Green/Black), MCI list | ◐ | `POST /api/mci/register`, `GET /api/mci` · `test_fr` |
 | FR‑11 | Time‑critical pathway timers — tap‑to‑timestamp (door‑to‑ECG/needle/CT) | Done | `POST /api/encounters/<id>/timer` · `test_fr` |
 | FR‑12 | Re‑triage — repeat assessments per encounter, reassessment‑due banner when the acuity window elapses, deterioration watch | ◐ | multiple `triage_event` rows, `reTriageBanner()` (app.js), `/api/ai/deterioration` |
 | FR‑13 | ED analytics — door‑to‑doctor, LOS, LWBS, disposition mix, MLC volumes; monthly override report (§11) | Done | `GET /api/dashboard`, `/api/reports/overrides` · `test_m3` §4 |
