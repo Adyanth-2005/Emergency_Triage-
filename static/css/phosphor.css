@@ -114,6 +114,13 @@ body {
 .dk-val { font-weight: 400 !important; color: var(--text); }   /* editorial, not heavy */
 .dk-top { color: var(--muted); }
 
+/* FR-13 ED analytics strip — quality metrics on one hairline-framed line */
+.ed-analytics { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; margin: 0 0 16px; padding: 12px 2px;
+  border-top: 1px solid rgba(72,83,70,.20); border-bottom: 1px solid rgba(72,83,70,.14); }
+.ed-analytics .eda-l { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--moss-70, #9cbf93); }
+.ed-analytics .eda-i { font-size: 12.5px; color: var(--muted); }
+.ed-analytics .eda-i b { color: var(--text); font-weight: 600; margin-left: 3px; }
+
 @media (max-width: 1180px) {
   .dash-kpis { grid-template-columns: repeat(2, 1fr); }
   .dk { border-right: none !important; border-bottom: 1px solid rgba(72, 83, 70, 0.16) !important; }

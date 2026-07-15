@@ -76,6 +76,7 @@ CREATE TABLE ed_encounter (
     -- tracking board points at needs a real timestamp, not a guess.
     first_physician_at TEXT,
     attended_by        TEXT,
+    bay                TEXT,   -- FR-3: charge-nurse bay / location allocation
     closed_ts     TEXT,
     CHECK (status <> 'CLOSED' OR closed_ts IS NOT NULL)
 );
@@ -176,7 +177,7 @@ CREATE TABLE disposition (
     encounter_id          INTEGER NOT NULL UNIQUE REFERENCES ed_encounter(id),
     type                  TEXT    NOT NULL CHECK (type IN
                             ('ADMIT','REFER_OUT','DISCHARGE','LAMA',
-                             'DEATH','BROUGHT_DEAD')),
+                             'DEATH','BROUGHT_DEAD','LWBS')),  -- LWBS = left without being seen (FR-13)
     decided_ts            TEXT    NOT NULL,
     decided_by            TEXT    NOT NULL,
 
@@ -270,6 +271,7 @@ SELECT
     e.arrival_ts,
     t.triaged_ts,
     e.first_physician_at,
+    e.bay,
     e.is_mlc,
     m.mlc_serial,
     e.status,

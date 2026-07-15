@@ -65,6 +65,8 @@ def _ensure_columns(conn):
         conn.execute("ALTER TABLE ed_encounter ADD COLUMN first_physician_at TEXT")
     if "attended_by" not in cols:
         conn.execute("ALTER TABLE ed_encounter ADD COLUMN attended_by TEXT")
+    if "bay" not in cols:
+        conn.execute("ALTER TABLE ed_encounter ADD COLUMN bay TEXT")  # FR-3
     conn.commit()
 
 
@@ -613,6 +615,23 @@ def attend(encounter_id):
                     "status": "IN_TREATMENT"}), 200
 
 
+# --- FR-3 : bay / location allocation --------------------------------
+@app.post("/api/encounters/<int:encounter_id>/bay")
+@auth.requires("triage")   # triage nurse / charge nurse allocates bays
+def set_bay(encounter_id):
+    """Assign (or clear) the physical bay/location for flow management."""
+    body = request.get_json(silent=True) or {}
+    bay = (body.get("bay") or "").strip()[:24] or None
+    conn = db()
+    enc = conn.execute("SELECT id FROM ed_encounter WHERE id=?", (encounter_id,)).fetchone()
+    if enc is None:
+        return jsonify({"error": "encounter_not_found"}), 404
+    conn.execute("UPDATE ed_encounter SET bay=? WHERE id=?", (bay, encounter_id))
+    audit(conn, auth.actor(), "BAY_ASSIGNED", "ed_encounter", encounter_id, {"bay": bay})
+    conn.commit()
+    return jsonify({"encounter_id": encounter_id, "bay": bay}), 200
+
+
 # --- Read models the console renders ---------------------------------
 def _patient_dict(conn, patient_id):
     p = conn.execute("SELECT * FROM patient WHERE id=?", (patient_id,)).fetchone()
@@ -811,11 +830,23 @@ def dashboard():
                        * 1440 AS INTEGER) m
            FROM ed_encounter
            WHERE first_physician_at IS NOT NULL""")]
-    d2d_median = None
-    if d2d:
-        d2d.sort()
-        mid = len(d2d) // 2
-        d2d_median = d2d[mid] if len(d2d) % 2 else (d2d[mid - 1] + d2d[mid]) / 2
+    def _median(vals):
+        if not vals:
+            return None
+        vals.sort(); m = len(vals) // 2
+        return vals[m] if len(vals) % 2 else (vals[m - 1] + vals[m]) / 2
+
+    d2d_median = _median(d2d)
+
+    # FR-13: ED length-of-stay (median, minutes) over closed encounters.
+    los = [r["m"] for r in conn.execute(
+        """SELECT CAST((julianday(closed_ts) - julianday(arrival_ts)) * 1440 AS INTEGER) m
+           FROM ed_encounter WHERE status='CLOSED' AND closed_ts IS NOT NULL""")]
+    los_median = _median(los)
+    # FR-13: LWBS — left without being seen (a disposition of type LWBS).
+    lwbs = scalar("SELECT COUNT(*) FROM disposition WHERE type='LWBS'")
+    closed_total = scalar("SELECT COUNT(*) FROM ed_encounter WHERE status='CLOSED'")
+    lwbs_rate = round(lwbs / closed_total * 100, 1) if closed_total else 0.0
 
     total_patients = scalar("SELECT COUNT(*) FROM patient")
     total_encounters = scalar("SELECT COUNT(*) FROM ed_encounter")
@@ -840,6 +871,9 @@ def dashboard():
         "level_mix": level_mix,
         "disposition_mix": disp_mix,
         "door_to_doctor_median_min": d2d_median,
+        "los_median_min": los_median,
+        "lwbs_count": lwbs,
+        "lwbs_rate": lwbs_rate,
         "total_patients": total_patients,
         "total_encounters": total_encounters,
         "overrides": overrides,
