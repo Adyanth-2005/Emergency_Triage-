@@ -470,6 +470,7 @@ async function viewDashboard() {
   const breached  = active.filter(r => r.is_breached);
   const waits     = waiting.map(r => r.elapsed_minutes || 0);
   const avgWait   = waits.length ? Math.round(waits.reduce((a,b)=>a+b,0)/waits.length) : 0;
+  const waitBreaches = waiting.filter(r => r.is_breached).length;  // breaches among those STILL waiting
 
   // Load: department pressure, not a vanity metric. Critical patients weigh most.
   const loadScore = Math.min(100, Math.round(
@@ -501,8 +502,9 @@ async function viewDashboard() {
       tone: critical.length ? "crit" : "ok", ic:"alert", filter:"critical" },
     { label:"In treatment",  val:treating.length, foot:"Physician attending",
       tone:"", ic:"steth", filter:"treating" },
-    { label:"Avg wait",      val:avgWait, unit:"min", foot:`${breached.length} past NABH target`,
-      tone: breached.length ? "warn" : "", ic:"clock", filter:"breach" },
+    { label:"Avg wait",      val: waiting.length ? avgWait : "—", unit: waiting.length ? "min" : "",
+      foot: waiting.length ? `${waitBreaches} waiting past target` : "queue clear",
+      tone: waitBreaches ? "warn" : "", ic:"clock", filter:"breach" },
   ];
 
   const chip = (k, lbl, n) =>
@@ -544,6 +546,15 @@ async function viewDashboard() {
         <div class="load-bar"><i style="width:${loadScore}%"></i></div>
         <div class="dk-foot">${active.length} active · ${critical.length} critical · ${breached.length} breached</div>
       </div>
+    </div>
+
+    <div class="ed-analytics" title="ED quality analytics (FR-13)">
+      <span class="eda-l">ED analytics</span>
+      <span class="eda-i">Door‑to‑doctor <b>${d.door_to_doctor_median_min!=null?Math.round(d.door_to_doctor_median_min)+"m":"—"}</b></span>
+      <span class="eda-i">LOS median <b>${d.los_median_min!=null?Math.round(d.los_median_min)+"m":"—"}</b></span>
+      <span class="eda-i">LWBS <b>${d.lwbs_count||0}${d.lwbs_rate?` · ${d.lwbs_rate}%`:""}</b></span>
+      <span class="eda-i">Overrides <b>${d.overrides||0}</b></span>
+      <span class="eda-i">MLC <b>${d.mlc_active||0}</b></span>
     </div>
 
     ${(clinical && next) ? `<div class="next-up">
@@ -667,7 +678,7 @@ function boardRow(x) {
     <td><span class="lvl ${levelClass(lvl)}">${lvl?("L"+lvl):"—"}</span></td>
     <td class="mono cell-sub">${fmtTime(x.arrival_ts)}</td>
     <td class="mono ${breach?'breach':''}">${fmtWait(x.elapsed_minutes)}${breach?" ⚠":""}</td>
-    <td>${statusBadge(x.status)}</td>
+    <td>${statusBadge(x.status)}${x.bay?` <span class="badge mono" style="margin-left:4px" title="Bay / location">${esc(x.bay)}</span>`:""}</td>
     <td>${x.is_mlc?`<span class="badge mlc">${icon("gavel")} ${esc(x.mlc_serial||"MLC")}</span>`:'<span class="muted">—</span>'}</td>
     <td class="right">${act}</td></tr>`;
 }
@@ -956,6 +967,7 @@ async function viewEncounter(id) {
           <dt>Arrival</dt><dd>${pretty(e.arrival_mode||"—")}</dd>
           ${e.brought_by?`<dt>Brought by</dt><dd>${esc(e.brought_by)}</dd>`:""}
           <dt>Status</dt><dd>${statusBadge(e.status)}</dd>
+          <dt>Bay</dt><dd>${e.bay?`<span class="badge mono">${esc(e.bay)}</span>`:'<span class="muted">—</span>'}${(!closed&&can("triage"))?` <button class="btn sm ghost" data-a="bay" style="margin-left:6px;height:24px;padding:0 9px">${e.bay?"Change":"Assign"}</button>`:""}</dd>
           ${e.first_physician_at?`<dt>Door-to-doctor</dt><dd class="mono">${fmtTime(e.first_physician_at)}</dd>`:""}
           <dt>Current level</dt><dd><span class="lvl ${levelClass(e.current_level||latest&&latest.final_level)}">${(latest&&latest.final_level)?("L"+latest.final_level):"—"}</span></dd>
         </dl>
@@ -978,6 +990,21 @@ async function viewEncounter(id) {
   wire("mlc", () => openMlcModal(id));
   wire("intim", () => openIntimationModal(D.mlc.id, id));
   wire("disp", () => openDispositionModal(id, D.intimation_pending));
+  wire("bay", () => openBayModal(id, e.bay));
+}
+function openBayModal(encId, current) {
+  openModal({ title:"Assign bay / location", icon:"bed",
+    body:`<form id="bayForm"><div class="field"><label>Bay / location <span class="muted">(e.g. RESUS‑1, Bay 4, Triage)</span></label>
+      <input class="inp mono" name="bay" value="${esc(current||"")}" autocomplete="off" placeholder="RESUS‑1" maxlength="24"></div>
+      <div class="hint">${icon("info")} Charge‑nurse flow control (FR‑3). Leave blank to clear.</div></form>`,
+    footer:`<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="baySave">${icon("check")} Save</button>` });
+  $("[data-close]").onclick = closeOverlay;
+  $("#baySave").onclick = async () => {
+    const bay = $("#bayForm").bay.value.trim();
+    const r = await api.post(`/api/encounters/${encId}/bay`, { bay });
+    if (r.ok) { closeOverlay(); toast("ok","Bay updated", bay||"cleared"); viewEncounter(encId); }
+    else toast("err","Could not set bay", (r.data&&r.data.error)||("HTTP "+r.status));
+  };
 }
 function statusText(s){return {ARRIVED:"Awaiting triage",TRIAGED:"Awaiting physician",IN_TREATMENT:"In treatment",CLOSED:"Closed"}[s]||s;}
 function triageItem(t) {
@@ -1127,7 +1154,7 @@ function openIntimationModal(mlcId, encId) {
 
 /* ---- Disposition modal (type-driven) ---- */
 function openDispositionModal(encId, pending) {
-  const types = ["ADMIT","REFER_OUT","DISCHARGE","LAMA","DEATH","BROUGHT_DEAD"];
+  const types = ["ADMIT","REFER_OUT","DISCHARGE","LAMA","LWBS","DEATH","BROUGHT_DEAD"];
   openModal({ title:"Disposition", icon:"file", wide:true,
     body:`<form id="dispForm">
       ${pending?`<div class="warn-banner">${icon("alert")}<div><div class="wt">MLC intimation not yet logged</div>
@@ -1154,6 +1181,7 @@ function dispFields(t) {
       <div class="field"><label>Contact</label><input class="inp mono" name="referral_contact"></div></div>
       <div class="field"><label>Reason <span class="req">*</span></label><input class="inp" name="referral_reason"></div>`,
     DISCHARGE: `<div class="field"><label>Discharge instructions <span class="req">*</span></label><textarea class="inp" name="discharge_instr" rows="3"></textarea></div>`,
+    LWBS: `<div class="hint">${icon("info")} <b>Left without being seen</b> — the patient departed before assessment/treatment. Recorded for the LWBS quality metric (FR‑13). No further fields required.</div>`,
     LAMA: `<div class="field"><label>Counselled by <span class="req">*</span></label><input class="inp" name="lama_counselled_by"></div>
       <label class="chk" style="max-width:320px;margin-bottom:12px"><input type="checkbox" name="lama_risks_explained" checked> <span>Risks explained to patient/kin <span class="req">*</span></span></label>
       <div class="field"><label>Witness</label><input class="inp" name="lama_witness"></div>`,
