@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Sign in — ED Triage Console</title>
+<link rel="icon" href="/static/favicon.svg">
+<style>
+/* =====================================================================
+   Login — "phosphorescent command display". Self-contained: the auth JS,
+   field IDs and API call are unchanged; only the presentation is new.
+   ===================================================================== */
+:root{
+  --void:#000000; --iron:#181818; --carbon:#212525; --circuit:#485346;
+  --phos-bb:#1f2a33; --rust:#231c1c;
+  --lime:#7fee64;
+  --phos-white:#ddffdc; --mint:#def0dd;
+  --sage-60:#8cab87; --sage-40:#677d64;
+  --moss-70:#9cbf93; --moss-80:#aed2a4;
+  --fern:#859984; --deep-fern:#697368; --pine:#3e4a3c;
+  --mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,'SF Mono',Consolas,monospace;
+  --sans:'Inter Tight','Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --ease:cubic-bezier(0.22,1,0.36,1);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;font-family:var(--sans);color:var(--sage-60);
+  background:
+    radial-gradient(1100px 700px at 78% 14%, rgba(127,238,100,.055), transparent 34%),
+    radial-gradient(900px 700px at 12% 88%, rgba(72,83,70,.10), transparent 40%),
+    var(--void);
+  overflow:hidden;-webkit-font-smoothing:antialiased;
+}
+
+/* layer 1 — animated network */
+#net{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.85}
+
+/* layout: asymmetric, integrated (not a split-screen card) */
+.lg{position:relative;z-index:2;min-height:100vh;min-height:100dvh;
+  display:grid;grid-template-columns:1.15fr .85fr;align-items:stretch}
+@media(max-width:940px){
+  .lg{grid-template-columns:1fr}
+  .brand{padding:38px 34px 4px;gap:20px}
+  .brand-mid h1{font-size:clamp(40px,11vw,66px)}
+  .brand-mid p,.brand-pts,.brand-foot{display:none}
+  .auth{padding:24px 34px 52px}
+}
+
+/* left — identity */
+.brand{position:relative;display:flex;flex-direction:column;justify-content:space-between;
+  padding:52px 60px}
+.eyebrow{display:flex;align-items:center;gap:16px;font-family:var(--mono);font-size:11px;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--sage-40)}
+.eyebrow .on{display:inline-flex;align-items:center;gap:7px;color:var(--lime)}
+.eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--lime);
+  box-shadow:0 0 10px var(--lime);animation:beat 2.4s var(--ease) infinite}
+@keyframes beat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.8)}}
+.brand-mid{max-width:640px}
+.brand-mid h1{font-weight:400;color:var(--phos-white);letter-spacing:-.05em;
+  font-size:clamp(52px,7vw,104px);line-height:.94;margin:0}
+.brand-mid h1 .l2{color:var(--sage-60)}
+.brand-mid p{max-width:440px;margin:26px 0 0;font-size:15px;line-height:1.7;color:var(--sage-60)}
+.brand-pts{list-style:none;padding:0;margin:30px 0 0;display:grid;gap:12px;max-width:480px}
+.brand-pts li{display:flex;gap:11px;align-items:flex-start;font-size:13px;color:var(--sage-40)}
+.brand-pts svg{width:15px;height:15px;color:var(--moss-70);flex:none;margin-top:2px}
+.brand-foot{font-family:var(--mono);font-size:11px;color:var(--deep-fern);letter-spacing:.02em;line-height:1.7}
+
+/* right — floating glass sign-in (not a big card) */
+.auth{display:flex;align-items:center;justify-content:center;padding:40px}
+.panel{width:100%;max-width:404px;padding:8px 4px}
+.panel .h{font-weight:400;color:var(--phos-white);font-size:27px;letter-spacing:-.02em;margin:0}
+.panel .sub{color:var(--sage-40);font-size:14px;margin:7px 0 30px}
+
+/* glass only where depth helps — the field stack */
+.fields{
+  padding:22px;border-radius:16px;
+  background:linear-gradient(135deg,rgba(33,37,37,.38),rgba(24,24,24,.16));
+  -webkit-backdrop-filter:blur(18px) saturate(120%);backdrop-filter:blur(18px) saturate(120%);
+  border:1px solid rgba(127,238,100,.08);
+  box-shadow:inset 0 1px 0 rgba(221,255,220,.04);
+}
+.fld{margin-bottom:15px}
+.fld:last-child{margin-bottom:0}
+.fld label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--sage-40);margin-bottom:8px}
+.fld input{width:100%;height:54px;padding:0 15px;color:var(--mint);font:inherit;font-size:14.5px;
+  background:rgba(24,24,24,.24);border:1px solid rgba(72,83,70,.35);border-radius:9px;outline:0;
+  transition:border-color .2s var(--ease),box-shadow .2s var(--ease),background .2s var(--ease)}
+.fld input::placeholder{color:var(--deep-fern)}
+.fld input:focus{border-color:rgba(127,238,100,.6);background:rgba(24,24,24,.4);
+  box-shadow:0 0 0 3px rgba(127,238,100,.06)}
+.fld input.bad{border-color:#c0463c;box-shadow:0 0 0 3px rgba(192,70,60,.08)}
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:46px}
+.pw-eye{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:0;
+  color:var(--sage-40);cursor:pointer;padding:7px;border-radius:7px;display:grid;place-items:center}
+.pw-eye:hover{color:var(--mint);background:rgba(127,238,100,.06)}
+.pw-eye svg{width:18px;height:18px}
+
+.row{display:flex;align-items:center;justify-content:space-between;margin:16px 2px 0;font-size:13px}
+.remember{display:flex;align-items:center;gap:9px;color:var(--sage-40);cursor:pointer;user-select:none}
+.remember input{accent-color:var(--lime);width:15px;height:15px}
+.forgot{color:var(--fern);text-decoration:none;transition:color .2s}
+.forgot:hover{color:var(--moss-70)}
+
+.err{display:none;align-items:center;gap:9px;margin-top:16px;padding:11px 14px;font-size:13px;
+  color:#ffc7c1;border-radius:9px;
+  background:linear-gradient(90deg,rgba(192,70,60,.14),transparent);
+  border-left:2px solid #c0463c}
+.err.show{display:flex;animation:shake .34s var(--ease)}
+.err svg{width:16px;height:16px;color:#e0655b;flex:none}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+
+.go{width:100%;height:52px;margin-top:20px;background:var(--lime);color:#04140a;border:0;border-radius:10px;
+  font:inherit;font-size:15px;font-weight:700;letter-spacing:-.01em;cursor:pointer;
+  transition:transform .22s var(--ease),box-shadow .22s var(--ease),filter .22s var(--ease)}
+.go:hover{transform:translateY(-1px);filter:brightness(1.06);box-shadow:0 10px 30px -12px rgba(127,238,100,.5)}
+.go:active{transform:translateY(0)}
+.go:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
+
+/* demo accounts — click to fill */
+.demo{margin-top:22px}
+.demo .t{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--deep-fern);margin-bottom:11px}
+.accs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.acc{display:flex;align-items:center;gap:10px;padding:9px 11px;text-align:left;font:inherit;cursor:pointer;
+  color:var(--sage-60);background:rgba(33,37,37,.24);border:1px solid rgba(72,83,70,.24);border-radius:10px;
+  transition:border-color .18s var(--ease),background .18s var(--ease),transform .18s var(--ease)}
+.acc:hover{border-color:rgba(127,238,100,.3);background:rgba(127,238,100,.04);transform:translateY(-1px)}
+.acc .av{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none;
+  font-family:var(--mono);font-size:10.5px;font-weight:700;color:#04140a}
+.acc .nm{font-size:12px;color:var(--mint);font-weight:600;line-height:1.25}
+.acc .rl{font-size:10.5px;color:var(--sage-40)}
+.sysline{display:flex;gap:18px;flex-wrap:wrap;margin-top:22px;font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.04em;color:var(--deep-fern)}
+.sysline span{display:inline-flex;align-items:center;gap:6px}
+.sysline i{width:5px;height:5px;border-radius:50%;background:var(--pine);font-style:normal}
+.sysline .ok i{background:var(--lime)}
+
+/* staggered entrance */
+.rise{opacity:0;transform:translateY(20px);animation:rise .8s var(--ease) forwards}
+.slide{opacity:0;transform:translateX(26px);animation:slide .9s var(--ease) forwards}
+@keyframes rise{to{opacity:1;transform:none}}
+@keyframes slide{to{opacity:1;transform:none}}
+.d1{animation-delay:.05s}.d2{animation-delay:.18s}.d3{animation-delay:.32s}
+.d4{animation-delay:.44s}.d5{animation-delay:.5s}
+
+@media(prefers-reduced-motion:reduce){
+  .rise,.slide{animation:none;opacity:1;transform:none}
+  .eyebrow .dot{animation:none}
+  #net{opacity:.4}
+}
+</style>
+</head>
+<body>
+<canvas id="net" aria-hidden="true"></canvas>
+
+<div class="lg">
+  <!-- LEFT: identity -->
+  <aside class="brand">
+    <div class="eyebrow rise d1">
+      <span>Medical Operations Platform</span>
+      <span class="on"><span class="dot"></span>SYSTEM ONLINE</span>
+    </div>
+
+    <div class="brand-mid">
+      <h1 class="rise d2">Emergency<br><span class="l2">Intelligence</span></h1>
+      <p class="rise d3">Secure clinical operations, medico-legal coordination, and
+        real-time triage intelligence — built so care is never held up by paperwork.</p>
+      <ul class="brand-pts rise d4">
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Treat-first registration — no field blocks emergency care (Art. 21)</span></li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Gapless MLC register with police-intimation log (BNSS 2023 §194–196)</span></li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Tamper-evident, hash-chained audit trail for every action</span></li>
+      </ul>
+    </div>
+
+    <div class="brand-foot rise d5">
+      Academic prototype · synthetic data only · no real patient information is stored or processed.
+    </div>
+  </aside>
+
+  <!-- RIGHT: sign-in -->
+  <main class="auth">
+    <div class="panel slide d3">
+      <h2 class="h">Welcome back</h2>
+      <div class="sub">Sign in to continue to the medical operations system.</div>
+
+      <form id="lf" autocomplete="on">
+        <div class="fields">
+          <div class="fld">
+            <label for="email">Hospital email</label>
+            <input type="email" id="email" name="email" placeholder="you@hospital.com" autocomplete="username" required>
+          </div>
+          <div class="fld">
+            <label for="pw">Password</label>
+            <div class="pw-wrap">
+              <input type="password" id="pw" name="password" placeholder="••••••••" autocomplete="current-password" required>
+              <button type="button" class="pw-eye" id="eye" aria-label="Show password">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="row">
+          <label class="remember"><input type="checkbox" id="remember"> Remember me</label>
+          <a class="forgot" href="#" onclick="return false">Forgot password?</a>
+        </div>
+
+        <div class="err" id="err">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span id="errMsg"></span>
+        </div>
+
+        <button type="submit" class="go" id="go">Sign in</button>
+      </form>
+
+      <div class="demo">
+        <div class="t">Demo accounts — click to fill</div>
+        <div class="accs">
+          <button class="acc" data-e="doctor@hospital.com"><span class="av" style="background:#aed2a4">AV</span><span><span class="nm">Dr. A. Verma</span><br><span class="rl">Doctor</span></span></button>
+          <button class="acc" data-e="nurse@hospital.com"><span class="av" style="background:#7fee64">NP</span><span><span class="nm">N. Priya</span><br><span class="rl">Triage Nurse</span></span></button>
+          <button class="acc" data-e="reception@hospital.com"><span class="av" style="background:#9cbf93">RI</span><span><span class="nm">R. Iyer</span><br><span class="rl">Receptionist</span></span></button>
+          <button class="acc" data-e="admin@hospital.com"><span class="av" style="background:#677d64;color:#def0dd">SA</span><span><span class="nm">System Admin</span><br><span class="rl">Administrator</span></span></button>
+        </div>
+      </div>
+
+      <div class="sysline">
+        <span class="ok"><i></i>SHA-256 session</span>
+        <span class="ok"><i></i>Secure session</span>
+        <span class="ok"><i></i>System operational</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+/* ---- phosphor network background (lightweight canvas, GPU-friendly) ---- */
+(() => {
+  const c = document.getElementById("net"), x = c.getContext("2d");
+  const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let W, H, DPR, nodes = [], mx = .5, my = .5;
+  function size(){
+    DPR = Math.min(devicePixelRatio || 1, 1.5);
+    W = c.width = innerWidth * DPR; H = c.height = innerHeight * DPR;
+    c.style.width = innerWidth + "px"; c.style.height = innerHeight + "px";
+    const n = Math.min(90, Math.round(innerWidth * innerHeight / 20000));
+    nodes = Array.from({length:n}, () => ({
+      x: Math.random()*W, y: Math.random()*H,
+      vx:(Math.random()-.5)*.12*DPR, vy:(Math.random()-.5)*.12*DPR,
+      r:(Math.random()*1.6+.6)*DPR, bright: Math.random() < .12
+    }));
+  }
+  addEventListener("mousemove", e => { mx = e.clientX/innerWidth; my = e.clientY/innerHeight; });
+  function frame(){
+    x.clearRect(0,0,W,H);
+    const px = (mx-.5)*20*DPR, py = (my-.5)*20*DPR;
+    for (let i=0;i<nodes.length;i++){
+      const a = nodes[i];
+      if(!RM){ a.x+=a.vx; a.y+=a.vy; }
+      if(a.x<0||a.x>W) a.vx*=-1; if(a.y<0||a.y>H) a.vy*=-1;
+      for(let j=i+1;j<nodes.length;j++){
+        const b=nodes[j], dx=a.x-b.x, dy=a.y-b.y, d=Math.hypot(dx,dy);
+        if(d < 150*DPR){
+          x.globalAlpha = (1 - d/(150*DPR)) * .12;
+          x.strokeStyle = "#859984"; x.lineWidth = DPR*.6;
+          x.beginPath(); x.moveTo(a.x+px,a.y+py); x.lineTo(b.x+px,b.y+py); x.stroke();
+        }
+      }
+    }
+    for(const a of nodes){
+      x.globalAlpha = a.bright ? .5 : .16;
+      x.fillStyle = a.bright ? "#7fee64" : "#9cbf93";
+      x.beginPath(); x.arc(a.x+px, a.y+py, a.r, 0, 7); x.fill();
+    }
+    x.globalAlpha = 1;
+    if(!RM) requestAnimationFrame(frame);
+  }
+  addEventListener("resize", size); size(); frame();
+})();
+
+/* ---- auth (unchanged logic: same endpoint, fields, redirect) ---- */
+const $ = s => document.querySelector(s);
+const errBox = $("#err"), errMsg = $("#errMsg");
+function showErr(m){ errMsg.textContent=m; errBox.classList.remove("show"); void errBox.offsetWidth;
+  errBox.classList.add("show"); $("#email").classList.add("bad"); $("#pw").classList.add("bad"); }
+function clearErr(){ errBox.classList.remove("show"); $("#email").classList.remove("bad"); $("#pw").classList.remove("bad"); }
+document.querySelectorAll(".acc").forEach(b => b.onclick = () => { clearErr();
+  $("#email").value = b.dataset.e; $("#pw").value = "password123"; $("#pw").focus(); });
+$("#eye").onclick = () => { const p=$("#pw"); p.type = p.type==="password" ? "text" : "password"; };
+["email","pw"].forEach(id => $("#"+id).addEventListener("input", clearErr));
+$("#lf").onsubmit = async (e) => {
+  e.preventDefault(); clearErr();
+  const btn = $("#go"); btn.disabled = true; btn.textContent = "Signing in…";
+  try {
+    const r = await fetch("/api/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: $("#email").value, password: $("#pw").value }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) { location.href = "/"; return; }
+    showErr(d.message || "Sign-in failed. Try again.");
+  } catch (_) { showErr("Cannot reach the server. Is the API running?"); }
+  btn.disabled = false; btn.textContent = "Sign in";
+};
+</script>
+</body>
+</html>

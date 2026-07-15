@@ -1,0 +1,3 @@
+# Optional — only needed to run against Turso / libSQL (persistent serverless DB).
+# Local development uses Python's stdlib sqlite3 and does NOT need this.
+libsql-experimental>=0.0.30
