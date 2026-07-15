@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local SQLite DB — regenerated deterministically by `python seed.py`
+ed.db
+verify.db
+
+# RAG embedding index cache — rebuilt on demand from ai/knowledge.py + docs/
+ai/index.json
+
+# Secrets / local env — never commit real values (use .env.example as the template)
+.env
+
+# Vercel / Node
+.vercel/
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

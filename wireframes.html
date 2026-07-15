@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRD-05 Emergency Triage — Screen Designs (M2)</title>
+<style>
+  /* Screen designs, M2 design freeze.
+     Colour is reserved for clinical acuity and MLC status. It is not
+     used decoratively anywhere in this document. */
+
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    color: #000;
+    background: #ffffff;
+    margin: 0;
+    padding: 24px 28px 60px;
+  }
+  .doc { max-width: 900px; }
+
+  /* document header */
+  .dochead { border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 4px; }
+  .dochead h1 { font-size: 15px; margin: 0 0 3px; font-weight: bold; }
+  .dochead .meta { font-size: 11px; color: #333; }
+  .dochead .meta span { margin-right: 18px; }
+  .revnote {
+    font-size: 11px; color: #333; border-bottom: 1px solid #999;
+    padding: 6px 0 10px; margin-bottom: 26px;
+  }
+
+  /* screen block */
+  .screen { margin-bottom: 34px; page-break-inside: avoid; }
+  .screen > h2 {
+    font-size: 13px; margin: 0 0 2px; font-weight: bold;
+  }
+  .screen > .ref { font-size: 11px; color: #555; margin-bottom: 8px; }
+  .screen > .intent {
+    font-size: 12px; color: #222; margin-bottom: 10px;
+    max-width: 78ch; border-left: 3px solid #ccc; padding-left: 9px;
+  }
+
+  /* the mock UI frame */
+  .ui { border: 1px solid #000; background: #fff; }
+  .ui .titlebar {
+    background: #e8e8e8; border-bottom: 1px solid #000;
+    padding: 5px 9px; font-size: 11px; font-weight: bold;
+    display: flex; justify-content: space-between;
+  }
+  .ui .titlebar .rt { font-weight: normal; font-family: "Courier New", monospace; }
+  .ui .pane { padding: 12px; }
+
+  /* form furniture */
+  .fieldrow { margin-bottom: 7px; display: flex; align-items: baseline; }
+  .fieldrow > label {
+    width: 130px; flex: 0 0 130px; font-size: 12px;
+  }
+  .req { font-weight: bold; }
+  .opt { color: #555; font-size: 11px; margin-left: 6px; }
+  .box {
+    border: 1px solid #767676; background: #fff; padding: 2px 5px;
+    font-family: "Courier New", monospace; font-size: 12px;
+    min-width: 190px; display: inline-block;
+  }
+  .box.sm { min-width: 52px; }
+  .box.md { min-width: 110px; }
+  .box.wide { min-width: 330px; }
+  .box.filled { background: #fff; }
+  .box.empty { color: #999; }
+
+  .btn {
+    border: 1px solid #000; background: #ddd; padding: 3px 12px;
+    font-size: 12px; display: inline-block; font-family: inherit;
+  }
+  .btn.primary { background: #c8c8c8; font-weight: bold; }
+  .btn.big {
+    padding: 9px 16px; font-weight: bold; font-size: 13px;
+    background: #d8d8d8;
+  }
+  .radio, .check { font-size: 12px; margin-right: 14px; white-space: nowrap; }
+
+  fieldset {
+    border: 1px solid #999; margin: 0 0 11px; padding: 8px 10px 10px;
+  }
+  legend {
+    font-size: 11px; font-weight: bold; padding: 0 5px;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+
+  /* acuity — the only colour in the document */
+  .lvl {
+    display: inline-block; width: 18px; height: 18px; line-height: 18px;
+    text-align: center; font-weight: bold; font-size: 12px;
+    font-family: "Courier New", monospace; border: 1px solid #000;
+  }
+  .l1 { background: #cc0000; color: #fff; }
+  .l2 { background: #e87400; color: #fff; }
+  .l3 { background: #e8d000; color: #000; }
+  .l4 { background: #2e8b2e; color: #fff; }
+  .l5 { background: #1560bd; color: #fff; }
+
+  .suggest {
+    border: 2px solid #000; background: #f2f2f2;
+    padding: 9px 11px; margin: 10px 0;
+  }
+  .suggest .hdr { font-size: 11px; font-weight: bold; text-transform: uppercase;
+                  letter-spacing: .05em; margin-bottom: 5px; }
+  .suggest .lvlline { font-size: 14px; font-weight: bold; margin-bottom: 6px; }
+  .suggest ul { margin: 4px 0 0 18px; padding: 0; font-size: 12px;
+                font-family: "Courier New", monospace; }
+
+  /* statutory notices — bordered, not coloured */
+  .statute {
+    border: 1px solid #000; background: #f7f7f7; padding: 7px 9px;
+    font-size: 11px; margin-top: 10px;
+  }
+  .statute .cite { font-weight: bold; }
+
+  .block {
+    border: 3px solid #cc0000; background: #fff; padding: 10px 12px; margin: 10px 0;
+  }
+  .block .bhdr {
+    font-weight: bold; font-size: 13px; color: #cc0000;
+    text-transform: uppercase; margin-bottom: 6px;
+  }
+  .block .bmsg { font-size: 12px; margin-bottom: 8px; }
+  .block .carve {
+    border-top: 1px solid #999; margin-top: 9px; padding-top: 8px;
+    font-size: 12px;
+  }
+
+  .mlcbadge {
+    border: 1px solid #000; background: #cc0000; color: #fff;
+    font-weight: bold; font-size: 11px; padding: 1px 6px;
+    font-family: "Courier New", monospace;
+  }
+  .pending {
+    border: 1px solid #000; background: #fff; font-weight: bold;
+    font-size: 11px; padding: 1px 6px;
+  }
+
+  /* tracking board */
+  table.board { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.board th {
+    background: #e8e8e8; border: 1px solid #000; padding: 4px 7px;
+    text-align: left; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+  table.board td { border: 1px solid #767676; padding: 4px 7px; }
+  table.board td.mono { font-family: "Courier New", monospace; }
+  .breach { font-weight: bold; }
+
+  /* annotation callouts under each screen */
+  .notes { margin-top: 9px; font-size: 12px; }
+  .notes table { border-collapse: collapse; width: 100%; }
+  .notes td { border: 1px solid #ccc; padding: 5px 8px; vertical-align: top; }
+  .notes td.k { width: 118px; font-weight: bold; background: #f4f4f4;
+                font-size: 11px; }
+  .notes td.k.law { background: #eaeaea; }
+
+  code { font-family: "Courier New", monospace; }
+  .hint { color: #555; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+<div class="dochead">
+  <h1>PRD-05 &mdash; Emergency Department Triage &amp; Medico-Legal Workflow</h1>
+  <div class="meta">
+    <span>Screen designs</span>
+    <span>M2 &mdash; Design freeze</span>
+    <span>12 July 2026</span>
+    <span>Scope: FR-1, FR-2, FR-4, FR-8 (S-tier)</span>
+  </div>
+</div>
+
+<div class="revnote">
+  Five screens. Layout is dense and high-contrast for wall-display and tablet use
+  (PRD-05 &sect;7, Usability). Colour is reserved for triage acuity and MLC status;
+  it carries meaning and is used nowhere else. Statutory constraints are printed
+  on the screens that enforce them, so the obligation is visible to the clerk at
+  3&nbsp;a.m. and not buried in a policy document.
+</div>
+
+
+<!-- ============================================================ 1 -->
+<div class="screen">
+  <h2>Screen 1 &mdash; Quick registration</h2>
+  <div class="ref">FR-2 &nbsp;|&nbsp; US-3 &nbsp;|&nbsp; Target: 10 seconds</div>
+  <div class="intent">
+    The unknown, unconscious patient is the design case, not the exception. This
+    screen must complete with zero fields filled in. There is no payment field
+    here and none anywhere before triage &mdash; that absence is a requirement, so
+    the screen states it.
+  </div>
+
+  <div class="ui">
+    <div class="titlebar">
+      <span>ED &mdash; Quick Registration</span>
+      <span class="rt">12/07/2026 &nbsp; 14:22:07</span>
+    </div>
+    <div class="pane">
+
+      <div style="border:2px solid #000;padding:10px;text-align:center;margin-bottom:12px;">
+        <span class="btn big">REGISTER UNKNOWN PATIENT</span>
+        <div class="hint" style="margin-top:6px;">
+          Issues a temporary ID and opens the encounter. No fields required.
+          Patient is triageable immediately.
+        </div>
+      </div>
+
+      <fieldset>
+        <legend>Identity &mdash; all fields optional</legend>
+
+        <div class="fieldrow">
+          <label>Name</label>
+          <span class="box wide empty">&mdash;</span>
+          <span class="opt">optional</span>
+        </div>
+        <div class="fieldrow">
+          <label>Age / Sex</label>
+          <span class="box sm empty">&mdash;</span>
+          <span style="margin:0 8px;">yrs</span>
+          <span class="radio">( ) M</span>
+          <span class="radio">( ) F</span>
+          <span class="radio">( ) Other</span>
+          <span class="radio">(&bull;) Unknown</span>
+        </div>
+        <div class="fieldrow">
+          <label>Phone</label>
+          <span class="box md empty">&mdash;</span>
+          <span class="opt">optional</span>
+        </div>
+        <div class="fieldrow">
+          <label>Brought in by</label>
+          <span class="box wide filled">passer-by, declined to give name</span>
+        </div>
+        <div class="hint" style="margin-left:130px;">
+          Bystander details are optional. A Good Samaritan is not to be detained
+          and must not be required to identify themselves.
+        </div>
+      </fieldset>
+
+      <div style="text-align:right;">
+        <span class="btn primary">REGISTER AND TRIAGE &rarr;</span>
+      </div>
+
+      <div class="statute">
+        <span class="cite">Article 21; Parmanand Katara v. Union of India (SC, 1989).</span>
+        Emergency care may not be denied or delayed for any reason, including
+        payment or police formality. No payment field appears on this screen or
+        at any point before triage.
+        <br>
+        <span class="cite">Good Samaritan Guidelines (MoRTH, endorsed SC 2016).</span>
+        Bystander identification is optional by design.
+      </div>
+
+    </div>
+  </div>
+
+  <div class="notes">
+    <table>
+      <tr>
+        <td class="k law">Compliance</td>
+        <td>C-1. Zero mandatory fields is the legal position, not a convenience.
+            The corresponding <code>patient</code> table is nullable in almost every
+            column; identity is enforced at reconciliation, never at creation.</td>
+      </tr>
+      <tr>
+        <td class="k">Reviewer note</td>
+        <td>An examiner cannot see an absence. The payment field is missing on
+            purpose, so the screen says so in words.</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+
+<!-- ============================================================ 2 -->
+<div class="screen">
+  <h2>Screen 2 &mdash; Structured triage</h2>
+  <div class="ref">FR-1 &nbsp;|&nbsp; US-1, US-2 &nbsp;|&nbsp; Target: 60 seconds, keyboard only</div>
+  <div class="intent">
+    The system proposes a level and shows the rule that produced it. The nurse
+    decides. A changed level is accepted, but not silently: the reason is
+    mandatory and the original suggestion is retained.
+  </div>
+
+  <div class="ui">
+    <div class="titlebar">
+      <span>Triage &mdash; TMP-2026-0001 (unidentified)</span>
+      <span class="rt">Elapsed 00:34</span>
+    </div>
+    <div class="pane">
+
+      <div class="fieldrow">
+        <label class="req">Chief complaint</label>
+        <span class="box wide filled">collapsed at roadside, not responding</span>
+      </div>
+
+      <fieldset>
+        <legend>Vital signs</legend>
+        <div class="fieldrow">
+          <label>HR / RR</label>
+          <span class="box sm filled">128</span>
+          <span style="margin:0 10px;">bpm</span>
+          <span class="box sm filled">32</span>
+          <span style="margin-left:10px;">/min</span>
+        </div>
+        <div class="fieldrow">
+          <label>BP / SpO&#8322;</label>
+          <span class="box sm filled">84</span>
+          <span style="margin:0 4px;">/</span>
+          <span class="box sm filled">50</span>
+          <span style="margin:0 10px;">mmHg</span>
+          <span class="box sm filled">88</span>
+          <span style="margin-left:10px;">%</span>
+        </div>
+        <div class="fieldrow">
+          <label>Temp / GCS</label>
+          <span class="box sm filled">36.4</span>
+          <span style="margin:0 10px;">&deg;C</span>
+          <span class="box sm filled">7</span>
+          <span style="margin-left:10px;">/15</span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Red flags</legend>
+        <span class="check">[X] Unresponsive</span>
+        <span class="check">[ ] Active haemorrhage</span>
+        <span class="check">[ ] Chest pain</span>
+        <br>
+        <span class="check">[ ] Airway compromise</span>
+        <span class="check">[ ] FAST positive</span>
+        <span class="check">[ ] Seizure</span>
+      </fieldset>
+
+      <div class="suggest">
+        <div class="hdr">System-suggested level</div>
+        <div class="lvlline">
+          <span class="lvl l1">1</span>&nbsp;
+          LEVEL 1 &mdash; RESUSCITATION &nbsp;&mdash;&nbsp; door-to-physician: IMMEDIATE
+        </div>
+        <div style="font-size:11px;font-weight:bold;">Rules matched:</div>
+        <ul>
+          <li>GCS 7 &le; 8</li>
+          <li>SpO2 88% &lt; 90%</li>
+          <li>SBP 84 &lt; 90 mmHg</li>
+          <li>Red flag: unresponsive</li>
+        </ul>
+      </div>
+
+      <fieldset>
+        <legend>Nurse decision</legend>
+        <div class="fieldrow">
+          <label>Final level</label>
+          <span class="radio">(&bull;) <span class="lvl l1">1</span></span>
+          <span class="radio">( ) <span class="lvl l2">2</span></span>
+          <span class="radio">( ) <span class="lvl l3">3</span></span>
+          <span class="radio">( ) <span class="lvl l4">4</span></span>
+          <span class="radio">( ) <span class="lvl l5">5</span></span>
+        </div>
+        <div class="fieldrow">
+          <label>Reason for change</label>
+          <span class="box wide empty">&mdash; required only if level differs &mdash;</span>
+        </div>
+        <div class="hint" style="margin-left:130px;">
+          The suggested level and the final level are both stored. Changing the
+          level does not erase the suggestion.
+        </div>
+      </fieldset>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span class="check">[ ] Flag as medico-legal case (MLC)</span>
+        <span class="btn primary">CONFIRM TRIAGE &rarr;</span>
+      </div>
+
+      <div class="statute">
+        <span class="cite">NABH 6th Ed., emergency standards.</span>
+        Triage policy must be documented and applied consistently. Scale in use:
+        AIIMS Triage Protocol, 5-level (Decision D-1). The scale is held in a
+        configuration table; substituting an adapted ESI scale is a data change,
+        not a code change.
+      </div>
+
+    </div>
+  </div>
+
+  <div class="notes">
+    <table>
+      <tr>
+        <td class="k">Design</td>
+        <td>The <em>Rules matched</em> list is the point of the screen. The machine
+            shows its working; the clinician retains the decision. This is the same
+            boundary PRD-05 &sect;10 draws for the advisory AI features, held here
+            even though the engine is a deterministic rule set.</td>
+      </tr>
+      <tr>
+        <td class="k law">Compliance</td>
+        <td>Override-with-reason is the stated mitigation for the VIP-pressure risk
+            (PRD-05 &sect;11). It is enforced by a database constraint, not by this
+            form &mdash; a form can be bypassed.</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+
+<!-- ============================================================ 3 -->
+<div class="screen">
+  <h2>Screen 3 &mdash; MLC register and police intimation</h2>
+  <div class="ref">FR-4 &nbsp;|&nbsp; US-4</div>
+  <div class="intent">
+    Intimation to police is a statutory duty. The serial is allocated by the
+    system and is gapless; a register with holes in it is a problem in court.
+  </div>
+
+  <div class="ui">
+    <div class="titlebar">
+      <span>Medico-Legal Case &mdash; MLC/2026/0002</span>
+      <span class="rt">TMP-2026-0001 &nbsp;|&nbsp; Level 1</span>
+    </div>
+    <div class="pane">
+
+      <fieldset>
+        <legend>Case</legend>
+        <div class="fieldrow">
+          <label>MLC serial</label>
+          <span class="box md filled">MLC/2026/0002</span>
+          <span class="hint" style="margin-left:9px;">system-allocated, sequential</span>
+        </div>
+        <div class="fieldrow">
+          <label class="req">Type</label>
+          <div>
+            <span class="radio">( ) Assault</span>
+            <span class="radio">(&bull;) Road traffic accident</span>
+            <span class="radio">( ) Poisoning</span>
+            <br>
+            <span class="radio">( ) Burns</span>
+            <span class="radio">( ) Suspected foul play</span>
+            <span class="radio">( ) POCSO</span>
+            <span class="radio">( ) Other</span>
+          </div>
+        </div>
+        <div class="fieldrow">
+          <label>Brought in by</label>
+          <span class="box wide filled">passer-by, declined to give name</span>
+          <span class="opt">optional</span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Police intimation &nbsp; <span class="pending">NOT YET INTIMATED</span></legend>
+        <div class="fieldrow">
+          <label class="req">Police station</label>
+          <span class="box md filled">Anna Nagar PS</span>
+        </div>
+        <div class="fieldrow">
+          <label class="req">Officer / badge</label>
+          <span class="box md empty">&mdash;</span>
+          <span style="margin:0 8px;">badge</span>
+          <span class="box sm empty">&mdash;</span>
+        </div>
+        <div class="fieldrow">
+          <label class="req">Mode</label>
+          <span class="radio">(&bull;) Telephone</span>
+          <span class="radio">( ) Written</span>
+          <span class="radio">( ) e-Portal</span>
+          <span class="radio">( ) In person</span>
+        </div>
+        <div class="fieldrow">
+          <label>Acknowledgement</label>
+          <span class="box md empty">&mdash;</span>
+          <span class="opt">optional</span>
+        </div>
+        <div style="text-align:right;">
+          <span class="btn primary">LOG INTIMATION</span>
+        </div>
+      </fieldset>
+
+      <div style="font-size:11px;"><b>Intimation history</b></div>
+      <div style="border:1px solid #767676;padding:7px;font-size:12px;color:#555;">
+        No intimation recorded. This encounter cannot be closed cleanly until one
+        is logged, or the omission is justified on the record.
+      </div>
+
+      <div class="statute">
+        <span class="cite">BNSS 2023, &sect;&sect;194&ndash;196 (formerly CrPC 39 / 174).</span>
+        Intimation to police is a statutory duty. This log is the record of
+        communication: who was informed, when, and by what means. Where a state
+        e-intimation portal is unavailable, the duty is discharged manually and
+        evidenced here.
+      </div>
+
+    </div>
+  </div>
+
+  <div class="notes">
+    <table>
+      <tr>
+        <td class="k law">Compliance</td>
+        <td>C-2. The serial is <code>UNIQUE</code> and allocated inside a
+            transaction; numbers are never skipped or reused.</td>
+      </tr>
+      <tr>
+        <td class="k">Boundary</td>
+        <td>The POCSO option sets a non-dismissible flag on the encounter. The full
+            mandatory-reporting prompt engine is FR-7, Phase 2, and is
+            <b>not built</b> in this milestone. The hook exists; the engine does not.</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+
+<!-- ============================================================ 4 -->
+<div class="screen">
+  <h2>Screen 4 &mdash; Disposition, with the open-MLC block</h2>
+  <div class="ref">FR-8, FR-4 &nbsp;|&nbsp; US-5, US-6</div>
+  <div class="intent">
+    The compliance case of the build. An MLC with no intimation logged cannot be
+    quietly closed. Note carefully what is blocked and what is not.
+  </div>
+
+  <div class="ui">
+    <div class="titlebar">
+      <span>Disposition &mdash; TMP-2026-0001 &nbsp; <span class="mlcbadge">MLC/2026/0002</span></span>
+      <span class="rt">12/07/2026 &nbsp; 16:05:41</span>
+    </div>
+    <div class="pane">
+
+      <fieldset>
+        <legend>Outcome</legend>
+        <span class="radio">( ) Admit</span>
+        <span class="radio">( ) Refer out</span>
+        <span class="radio">(&bull;) Discharge</span>
+        <br>
+        <span class="radio">( ) LAMA / DOR</span>
+        <span class="radio">( ) Death in ED</span>
+        <span class="radio">( ) Brought dead</span>
+      </fieldset>
+
+      <div class="fieldrow">
+        <label>Instructions</label>
+        <span class="box wide empty">&mdash;</span>
+      </div>
+
+      <div class="block">
+        <div class="bhdr">Cannot close &mdash; police not intimated</div>
+        <div class="bmsg">
+          MLC/2026/0002 has no intimation logged against it. Intimation to police
+          is a statutory duty under BNSS 2023 &sect;&sect;194&ndash;196.
+        </div>
+        <div class="bmsg" style="border:1px solid #000;padding:6px 8px;background:#f2f2f2;">
+          <b>This blocks the paperwork, not the patient.</b> Treatment, discharge
+          care and the patient's departure are unaffected. What is blocked is the
+          closure of the medico-legal record with a statutory duty outstanding.
+        </div>
+        <div style="text-align:center;margin:9px 0 2px;">
+          <span class="btn primary">GO TO INTIMATION SCREEN</span>
+        </div>
+
+        <div class="carve">
+          <b>Override, on the record.</b> If closure must proceed regardless, the
+          reason is recorded against the user and audited by the quality team.
+          <div class="fieldrow" style="margin-top:6px;">
+            <label>Justification</label>
+            <span class="box wide empty">&mdash; required &mdash;</span>
+          </div>
+          <div style="text-align:right;">
+            <span class="btn">PROCEED WITHOUT INTIMATION</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="notes">
+    <table>
+      <tr>
+        <td class="k law">Compliance</td>
+        <td>C-2 / US-6. The API returns <code>409</code> on this condition. Supplying
+            a recorded justification converts it to <code>201</code>. Both outcomes are
+            written to the append-only audit log.</td>
+      </tr>
+      <tr>
+        <td class="k">Read this</td>
+        <td>The block is on the <b>close-out</b>, never on the <b>care</b>. A system
+            that could withhold treatment pending a police formality would breach the
+            very authority (Article 21) that the rest of this design exists to honour.
+            The distinction is deliberate and is stated on the screen itself.</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+
+<!-- ============================================================ 5 -->
+<div class="screen">
+  <h2>Screen 5 &mdash; ED tracking board (read-only slice)</h2>
+  <div class="ref">FR-3 &nbsp;|&nbsp; Not in build scope &mdash; wall display, wireframe only</div>
+  <div class="intent">
+    FR-3 is Phase 2 and is not being built. The read-only view is shown because the
+    seeded dataset renders it and because it is where breach time becomes visible.
+  </div>
+
+  <div class="ui">
+    <div class="titlebar">
+      <span>ED Tracking Board</span>
+      <span class="rt">12/07/2026 &nbsp; 16:05:41 &nbsp;|&nbsp; 6 waiting</span>
+    </div>
+    <div class="pane" style="padding:0;">
+      <table class="board">
+        <tr>
+          <th style="width:26px;">Lv</th>
+          <th>Patient</th>
+          <th>Complaint</th>
+          <th style="width:74px;">Waiting</th>
+          <th style="width:74px;">Target</th>
+          <th style="width:96px;">Status</th>
+        </tr>
+        <tr>
+          <td><span class="lvl l1">1</span></td>
+          <td class="mono">TMP-2026-0001 <span class="hint">(unidentified)</span></td>
+          <td>Collapsed at roadside</td>
+          <td class="mono breach">00:34</td>
+          <td class="mono">immediate</td>
+          <td><span class="mlcbadge">MLC</span> <span class="pending">NO INTIM.</span></td>
+        </tr>
+        <tr>
+          <td><span class="lvl l2">2</span></td>
+          <td class="mono">UH-100241</td>
+          <td>Central chest pain, radiating</td>
+          <td class="mono breach">00:12</td>
+          <td class="mono">10 min</td>
+          <td class="breach">BREACHED</td>
+        </tr>
+        <tr>
+          <td><span class="lvl l3">3</span></td>
+          <td class="mono">UH-100242</td>
+          <td>Assault, facial laceration</td>
+          <td class="mono">00:18</td>
+          <td class="mono">30 min</td>
+          <td><span class="mlcbadge">MLC</span> intimated</td>
+        </tr>
+        <tr>
+          <td><span class="lvl l3">3</span></td>
+          <td class="mono">UH-100243</td>
+          <td>Fever, known diabetic</td>
+          <td class="mono">00:21</td>
+          <td class="mono">30 min</td>
+          <td>&mdash;</td>
+        </tr>
+        <tr>
+          <td><span class="lvl l4">4</span></td>
+          <td class="mono">UH-100244</td>
+          <td>Forearm laceration</td>
+          <td class="mono">00:39</td>
+          <td class="mono">60 min</td>
+          <td>&mdash;</td>
+        </tr>
+        <tr>
+          <td><span class="lvl l4">4</span></td>
+          <td class="mono">UH-100245</td>
+          <td>Dressing change</td>
+          <td class="mono">00:52</td>
+          <td class="mono">60 min</td>
+          <td class="hint">upgraded 5&rarr;4</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="notes">
+    <table>
+      <tr>
+        <td class="k">Scope</td>
+        <td>FR-3 is Phase 2. The API exposes the read slice
+            (<code>GET /api/board</code>); the wall-display application is not part of
+            this build and is declared, not expanded.</td>
+      </tr>
+      <tr>
+        <td class="k">Seed</td>
+        <td>The last row carries the recorded override (level 5 raised to 4), so the
+            override report returns a row at demonstration rather than an empty table.
+            The first row carries the outstanding intimation that triggers Screen 4.</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div style="border-top:1px solid #999;padding-top:9px;font-size:11px;color:#444;">
+  Screens 1&ndash;4 correspond to routes implemented and tested in this milestone.
+  Screen 5 is a wireframe of an out-of-scope requirement and is included for
+  continuity only.
+</div>
+
+</div>
+</body>
+</html>
