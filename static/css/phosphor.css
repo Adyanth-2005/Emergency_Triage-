@@ -414,3 +414,123 @@ body {
   .mlc-row .ms-col.ms-wide { grid-column: 1 / -1; }
   .enc::before { inset: -16px -20px; }
 }
+
+/* =====================================================================
+   PHASE 2/3 FEATURES — FR-5..FR-14 + AI-2/3/4.
+   Same phosphor language: hairline frames, dark glass, rationed lime,
+   coral kept as the medico-legal / danger signal.
+   ===================================================================== */
+
+/* registration cashless field slots between arrival and brought-by */
+.f-cashless { grid-column: span 4; }
+@media (max-width: 1100px) { .f-cashless { grid-column: span 6; } }
+@media (max-width: 640px)  { .f-cashless { grid-column: span 12; } }
+
+/* ---- AI-3 deterioration strip (dashboard) — amber, not coral (a watch, not a code) ---- */
+.deter-strip { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 0 0 16px; padding: 11px 16px;
+  border-radius: 0 10px 10px 0; background: linear-gradient(90deg, rgba(217,178,63,0.10), transparent 72%);
+  border-left: 2px solid var(--warn); }
+.deter-strip .ds-ic { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; flex: none;
+  background: rgba(217,178,63,0.14); color: var(--warn); }
+.deter-strip .ds-ic svg { width: 15px; height: 15px; }
+.deter-strip .ds-t { font-size: 13px; color: var(--text-2); } .deter-strip .ds-t b { color: var(--warn); }
+.deter-strip .ds-p { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 8px;
+  background: rgba(0,0,0,0.25); border: 1px solid var(--glass-brd); color: var(--text); font-size: 12px; }
+.deter-strip .ds-why { color: var(--warn); font-size: 10.5px; }
+
+/* ---- FR-12 re-triage-due banner reuses .enc-warn but tinted amber ---- */
+.enc-warn.retri { background: linear-gradient(90deg, rgba(217,178,63,0.1), transparent 70%); border-left-color: var(--warn); }
+.enc-warn.retri svg { color: var(--warn); }
+.enc-warn.retri .wt { color: var(--warn); }
+.enc-warn .btn.sm.coral { margin-top: 8px; }
+
+/* ---- FR-7 mandatory-reporting duties ---- */
+.report-sec { margin-top: 26px; }
+.duty-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.duty { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; padding: 13px 16px;
+  border-radius: 11px; background: rgba(33,37,37,0.34); border: 1px solid var(--glass-brd); }
+.duty.hard { border-color: rgba(215,107,82,0.4); background: linear-gradient(135deg, rgba(215,107,82,0.08), rgba(24,24,24,0.1)); }
+.duty.done { border-color: rgba(127,238,100,0.3); }
+.duty.dism { opacity: 0.72; }
+.duty-sev { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none;
+  background: rgba(217,178,63,0.14); color: var(--warn); }
+.duty-sev.hi { background: rgba(215,107,82,0.16); color: var(--coral-2); }
+.duty-sev svg { width: 16px; height: 16px; }
+.duty-label { font-size: 13.5px; color: var(--text); font-weight: 600; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.duty-stat { font-size: 10.5px; color: var(--muted); margin-top: 3px; letter-spacing: .02em; }
+.duty-ack { font-size: 11.5px; color: var(--teal-ink); margin-top: 5px; display: flex; align-items: center; gap: 5px; }
+.duty-ack svg { width: 13px; height: 13px; color: var(--teal); flex: none; }
+.duty-acts { display: flex; gap: 8px; flex: none; }
+@media (max-width: 680px) { .duty { grid-template-columns: auto 1fr; } .duty-acts { grid-column: 2; justify-content: flex-start; } }
+
+/* ---- FR-5 injuries list + body-map ---- */
+.injury-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.injury-list li { display: flex; gap: 12px; align-items: flex-start; }
+.inj-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; flex: none;
+  background: var(--coral); box-shadow: 0 0 8px rgba(215,107,82,0.5); }
+.inj-hd { font-size: 13.5px; color: var(--text); }
+.injury-modal { display: grid; grid-template-columns: 260px 1fr; gap: 24px; align-items: start; }
+.bm-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.bodymap { width: 200px; height: 260px; color: rgba(140,171,135,0.5); }
+.bm-figure { color: rgba(140,171,135,0.42); }
+.bm-hot .bm-region { fill: transparent; stroke: transparent; cursor: pointer; transition: fill .15s, stroke .15s; }
+.bm-hot .bm-region:hover { fill: rgba(127,238,100,0.14); }
+.bm-region.sel { fill: rgba(215,107,82,0.28); stroke: var(--coral-2); stroke-width: 1.5; }
+.bm-picked { font-size: 11px; color: var(--teal-ink); text-align: center; }
+.bm-back { display: flex; }
+.injury-form { display: flex; flex-direction: column; gap: 4px; }
+@media (max-width: 720px) { .injury-modal { grid-template-columns: 1fr; } .bm-wrap { order: -1; } }
+
+/* ---- FR-11 pathway timers ---- */
+.timer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.timer { padding: 13px 15px; border-radius: 11px; background: rgba(33,37,37,0.34); border: 1px solid var(--glass-brd);
+  display: flex; flex-direction: column; gap: 6px; min-height: 96px; }
+.timer.done { border-color: rgba(127,238,100,0.3); }
+.timer.over { border-color: rgba(215,107,82,0.4); background: linear-gradient(135deg, rgba(215,107,82,0.08), rgba(24,24,24,0.1)); }
+.timer .tm-l { font-size: 12px; font-weight: 600; color: var(--text-2); letter-spacing: .01em; }
+.timer .tm-val { font-family: var(--font-mono); font-size: 30px; line-height: 1; color: var(--text); }
+.timer .tm-val small { font-size: 12px; color: var(--muted); margin-left: 3px; }
+.timer .tm-ft { font-size: 11px; color: var(--muted); margin-top: auto; }
+.timer .tm-ft.over { color: var(--coral-2); }
+.timer .btn.sm { margin-top: auto; align-self: flex-start; }
+
+/* ---- FR-9 pre-arrival cards ---- */
+.pre-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.pre-card { padding: 15px 17px; border-radius: 13px; background: linear-gradient(135deg, rgba(33,37,37,0.34), rgba(24,24,24,0.12));
+  border: 1px solid var(--glass-brd); display: flex; flex-direction: column; gap: 9px; position: relative; overflow: hidden; }
+.pre-card.done { opacity: 0.6; }
+.pre-card.code-on, .pre-card.code-stemi, .pre-card.code-stroke, .pre-card.code-trauma { border-color: rgba(215,107,82,0.4); }
+.pre-card.code-stemi::before, .pre-card.code-stroke::before, .pre-card.code-trauma::before, .pre-card.code-on::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--coral); box-shadow: 0 0 10px rgba(215,107,82,.5); }
+.pre-hd { display: flex; align-items: center; gap: 10px; }
+.pre-src { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+.pre-src svg { width: 14px; height: 14px; color: var(--teal); }
+.code-badge { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: .06em; padding: 2px 9px;
+  border-radius: 20px; background: rgba(215,107,82,0.16); color: var(--coral-2); border: 1px solid rgba(215,107,82,0.4); }
+.pre-eta { margin-left: auto; font-family: var(--font-mono); font-size: 12px; color: var(--warn); }
+.pre-who { font-size: 14px; color: var(--text); }
+.pre-ft { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+.pre-acts { margin-left: auto; display: flex; gap: 7px; }
+
+/* ---- FR-10 MCI mode ---- */
+.mci-tags { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.mci-tag { padding: 18px 16px; border-radius: 14px; background: rgba(33,37,37,0.34); border: 1px solid var(--glass-brd);
+  display: flex; flex-direction: column; align-items: center; gap: 5px; text-align: center; }
+.mci-tag .mt-count { font-family: var(--font-mono); font-size: 44px; line-height: 1; color: var(--text); }
+.mci-tag .mt-lbl { font-family: var(--font-mono); font-size: 12px; font-weight: 700; letter-spacing: .1em; }
+.mci-tag .mt-desc { font-size: 11px; color: var(--muted); }
+.mci-tag .btn.sm { margin-top: 8px; }
+.mci-red    { border-top: 3px solid #d21f2c; } .mci-red .mt-lbl    { color: #ef6b73; }
+.mci-yellow { border-top: 3px solid #e0a30b; } .mci-yellow .mt-lbl { color: var(--warn); }
+.mci-green  { border-top: 3px solid #2fa36b; } .mci-green .mt-lbl  { color: var(--teal); }
+.mci-black  { border-top: 3px solid #6b7280; } .mci-black .mt-lbl  { color: #9aa4ad; }
+.mci-chip { font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; letter-spacing: .06em; padding: 2px 8px; border-radius: 6px; }
+.mci-chip.mci-red { background: rgba(210,31,44,0.18); color: #ef6b73; border-top: none; }
+.mci-chip.mci-yellow { background: rgba(224,163,11,0.16); color: var(--warn); }
+.mci-chip.mci-green { background: rgba(47,163,107,0.16); color: var(--teal); }
+.mci-chip.mci-black { background: rgba(107,114,128,0.2); color: #9aa4ad; }
+@media (max-width: 720px) { .mci-tags { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---- AI-2/AI-4 advisory drafts ---- */
+.ai-draft { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; color: var(--text); white-space: pre-wrap;
+  background: rgba(0,0,0,0.28); border: 1px solid var(--glass-brd); border-radius: 10px; padding: 14px 16px; margin: 0; max-height: 46vh; overflow-y: auto; }

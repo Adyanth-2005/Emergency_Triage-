@@ -23,6 +23,7 @@ from flask import (Flask, g, jsonify, redirect, render_template, request,
 
 import auth
 import db_backend
+import reporting
 import triage_rules
 
 HERE = Path(__file__).parent
@@ -66,7 +67,32 @@ def _ensure_columns(conn):
     if "attended_by" not in cols:
         conn.execute("ALTER TABLE ed_encounter ADD COLUMN attended_by TEXT")
     if "bay" not in cols:
-        conn.execute("ALTER TABLE ed_encounter ADD COLUMN bay TEXT")  # FR-3
+        conn.execute("ALTER TABLE ed_encounter ADD COLUMN bay TEXT")               # FR-3
+    if "cashless_scheme" not in cols:
+        conn.execute("ALTER TABLE ed_encounter ADD COLUMN cashless_scheme TEXT")   # FR-14
+    if "mci_tag" not in cols:
+        conn.execute("ALTER TABLE ed_encounter ADD COLUMN mci_tag TEXT")           # FR-10
+    # FR-5/6/7/9/11 tables — idempotent so existing databases get them without a reseed.
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS injury_note(id INTEGER PRIMARY KEY AUTOINCREMENT,
+            encounter_id INTEGER NOT NULL REFERENCES ed_encounter(id), region TEXT NOT NULL,
+            wound_type TEXT NOT NULL, description TEXT, photo_consent TEXT, photo_ref TEXT,
+            recorded_by TEXT NOT NULL, recorded_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS evidence_item(id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mlc_case_id INTEGER NOT NULL REFERENCES mlc_case(id), item TEXT NOT NULL,
+            description TEXT, collected_by TEXT NOT NULL, handed_to TEXT, handed_badge TEXT,
+            signature_ref TEXT, recorded_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS reporting_ack(id INTEGER PRIMARY KEY AUTOINCREMENT,
+            encounter_id INTEGER NOT NULL REFERENCES ed_encounter(id), duty TEXT NOT NULL,
+            action TEXT NOT NULL, justification TEXT, acted_by TEXT NOT NULL, acted_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS prearrival(id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL,
+            eta_minutes INTEGER, age_years INTEGER, sex TEXT, complaint TEXT, vitals_json TEXT,
+            code TEXT, status TEXT NOT NULL DEFAULT 'INBOUND', encounter_id INTEGER REFERENCES ed_encounter(id),
+            logged_by TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS pathway_timer(id INTEGER PRIMARY KEY AUTOINCREMENT,
+            encounter_id INTEGER NOT NULL REFERENCES ed_encounter(id), kind TEXT NOT NULL,
+            stamped_at TEXT NOT NULL, stamped_by TEXT NOT NULL, UNIQUE(encounter_id, kind));
+    """)
     conn.commit()
 
 
@@ -296,9 +322,10 @@ def quick_reg():
 
     cur = conn.execute(
         """INSERT INTO ed_encounter
-           (patient_id, arrival_ts, arrival_mode, brought_by, status)
-           VALUES (?,?,?,?, 'ARRIVED')""",
-        (patient_id, ts, body.get("arrival_mode"), body.get("brought_by")),
+           (patient_id, arrival_ts, arrival_mode, brought_by, cashless_scheme, status)
+           VALUES (?,?,?,?,?, 'ARRIVED')""",
+        (patient_id, ts, body.get("arrival_mode"), body.get("brought_by"),
+         body.get("cashless_scheme") or None),
     )
     encounter_id = cur.lastrowid
 
@@ -702,6 +729,22 @@ def encounter_detail(encounter_id):
 
     intimation_pending = bool(enc["is_mlc"]) and len(intimations) == 0
 
+    # FR-5 injuries, FR-11 pathway timers, FR-7 reporting duties (read-model extension)
+    injuries = [dict(r) for r in conn.execute(
+        "SELECT * FROM injury_note WHERE encounter_id=? ORDER BY id", (encounter_id,))]
+    timers = [dict(r) for r in conn.execute(
+        "SELECT * FROM pathway_timer WHERE encounter_id=? ORDER BY id", (encounter_id,))]
+    latest = triages[0] if triages else None
+    duties = reporting.duties_for(
+        mlc["mlc_type"] if mlc else None,
+        latest["red_flags"] if latest else [],
+        latest["chief_complaint"] if latest else None,
+        enc["arrival_mode"])
+    acks = [dict(r) for r in conn.execute(
+        "SELECT * FROM reporting_ack WHERE encounter_id=? ORDER BY id", (encounter_id,))]
+    acked = {a["duty"] for a in acks}
+    reporting_pending = [d for d in duties if d["code"] not in acked]
+
     return jsonify({
         "encounter": enc,
         "patient": patient,
@@ -710,6 +753,10 @@ def encounter_detail(encounter_id):
         "intimations": intimations,
         "disposition": dict(disp) if disp else None,
         "intimation_pending": intimation_pending,
+        "injuries": injuries,
+        "timers": timers,
+        "cashless_scheme": enc.get("cashless_scheme"),
+        "reporting": {"duties": duties, "acks": acks, "pending": reporting_pending},
     })
 
 
@@ -747,11 +794,18 @@ def mlc_detail(mlc_id):
     intimations = [dict(r) for r in conn.execute(
         "SELECT * FROM police_intimation WHERE mlc_case_id=? ORDER BY intimated_ts",
         (mlc_id,))]
+    # FR-6 chain-of-custody evidence log
+    evidence = [dict(r) for r in conn.execute(
+        "SELECT * FROM evidence_item WHERE mlc_case_id=? ORDER BY id", (mlc_id,))]
+    injuries = [dict(r) for r in conn.execute(
+        "SELECT * FROM injury_note WHERE encounter_id=? ORDER BY id", (m["encounter_id"],))]
     return jsonify({
         "mlc": m,
         "encounter": dict(enc) if enc else None,
         "patient": patient,
         "intimations": intimations,
+        "evidence": evidence,
+        "injuries": injuries,
     })
 
 
@@ -858,6 +912,8 @@ def dashboard():
            WHERE e.status <> 'CLOSED'
              AND NOT EXISTS (SELECT 1 FROM police_intimation pi
                              WHERE pi.mlc_case_id = m.id)""")
+    inbound = scalar("SELECT COUNT(*) FROM prearrival WHERE status='INBOUND'")
+    mci_active = scalar("SELECT COUNT(*) FROM ed_encounter WHERE mci_tag IS NOT NULL")
     ok, broken = verify_chain(conn)
 
     return jsonify({
@@ -878,6 +934,8 @@ def dashboard():
         "total_encounters": total_encounters,
         "overrides": overrides,
         "intimation_pending": intimation_pending,
+        "inbound": inbound,
+        "mci_count": mci_active,
         "audit_chain_intact": ok,
         "audit_first_broken_row": broken,
         "generated_at": now(),
@@ -941,6 +999,291 @@ def ai_ask():
            "citations": [c.get("chunk_id") for c in result.get("citations", [])]})
     conn.commit()
     return jsonify(result)
+
+
+# --- FR-5 : Injury documentation (body-map) --------------------------
+@app.post("/api/encounters/<int:encounter_id>/injury")
+@auth.requires("triage")
+def add_injury(encounter_id):
+    b = request.get_json(silent=True) or {}
+    if not b.get("region") or not b.get("wound_type"):
+        return jsonify({"error": "region_and_type_required"}), 422
+    conn = db()
+    cur = conn.execute(
+        """INSERT INTO injury_note(encounter_id,region,wound_type,description,
+               photo_consent,photo_ref,recorded_by,recorded_at) VALUES (?,?,?,?,?,?,?,?)""",
+        (encounter_id, b["region"], b["wound_type"], b.get("description"),
+         b.get("photo_consent"), b.get("photo_ref"), auth.actor(), now()))
+    audit(conn, auth.actor(), "INJURY_NOTE", "injury_note", cur.lastrowid,
+          {"encounter": encounter_id, "region": b["region"], "type": b["wound_type"]})
+    conn.commit()
+    return jsonify({"id": cur.lastrowid}), 201
+
+
+# --- FR-6 : Evidence / chain-of-custody ------------------------------
+@app.post("/api/mlc/<int:mlc_id>/evidence")
+@auth.requires("mlc")
+def add_evidence(mlc_id):
+    b = request.get_json(silent=True) or {}
+    if not b.get("item"):
+        return jsonify({"error": "item_required"}), 422
+    conn = db()
+    cur = conn.execute(
+        """INSERT INTO evidence_item(mlc_case_id,item,description,collected_by,
+               handed_to,handed_badge,signature_ref,recorded_at) VALUES (?,?,?,?,?,?,?,?)""",
+        (mlc_id, b["item"], b.get("description"), auth.actor(), b.get("handed_to"),
+         b.get("handed_badge"), b.get("signature_ref"), now()))
+    audit(conn, auth.actor(), "EVIDENCE_LOGGED", "evidence_item", cur.lastrowid,
+          {"mlc": mlc_id, "item": b["item"]})
+    conn.commit()
+    return jsonify({"id": cur.lastrowid}), 201
+
+
+# --- FR-7 : Mandatory-reporting engine -------------------------------
+@app.get("/api/encounters/<int:encounter_id>/reporting")
+@auth.login_required
+def get_reporting(encounter_id):
+    conn = db()
+    enc = conn.execute("SELECT * FROM ed_encounter WHERE id=?", (encounter_id,)).fetchone()
+    if enc is None:
+        return jsonify({"error": "not_found"}), 404
+    mlc = conn.execute("SELECT mlc_type FROM mlc_case WHERE encounter_id=?", (encounter_id,)).fetchone()
+    tri = conn.execute("SELECT chief_complaint, red_flags_json FROM triage_event "
+                       "WHERE encounter_id=? ORDER BY id DESC LIMIT 1", (encounter_id,)).fetchone()
+    red, complaint = [], None
+    if tri:
+        complaint = tri["chief_complaint"]
+        try:
+            red = json.loads(tri["red_flags_json"] or "[]")
+        except (ValueError, TypeError):
+            red = []
+    duties = reporting.duties_for(mlc["mlc_type"] if mlc else None, red, complaint, enc["arrival_mode"])
+    acks = [dict(r) for r in conn.execute(
+        "SELECT * FROM reporting_ack WHERE encounter_id=? ORDER BY id", (encounter_id,))]
+    return jsonify({"duties": duties, "acks": acks})
+
+
+@app.post("/api/encounters/<int:encounter_id>/reporting/ack")
+@auth.login_required
+def ack_reporting(encounter_id):
+    b = request.get_json(silent=True) or {}
+    action = b.get("action")   # REPORTED | DISMISSED
+    just = (b.get("justification") or "").strip()
+    if action == "DISMISSED" and len(just) < 10:
+        return jsonify({"error": "justification_required",
+                        "detail": "Dismissing a mandatory-reporting duty requires a recorded "
+                                  "reason (min 10 chars)."}), 422
+    conn = db()
+    cur = conn.execute("""INSERT INTO reporting_ack(encounter_id,duty,action,justification,acted_by,acted_at)
+                          VALUES (?,?,?,?,?,?)""",
+                       (encounter_id, b.get("duty"), action, just or None, auth.actor(), now()))
+    audit(conn, auth.actor(), "REPORTING_" + str(action), "reporting_ack", cur.lastrowid,
+          {"encounter": encounter_id, "duty": b.get("duty")})
+    conn.commit()
+    return jsonify({"id": cur.lastrowid}), 201
+
+
+# --- FR-9 : Pre-arrival / ambulance intake ---------------------------
+@app.get("/api/prearrival")
+@auth.login_required
+def list_prearrival():
+    return jsonify([dict(r) for r in db().execute(
+        "SELECT * FROM prearrival ORDER BY (status='INBOUND') DESC, id DESC LIMIT 100")])
+
+
+@app.post("/api/prearrival")
+@auth.requires("register")
+def add_prearrival():
+    b = request.get_json(silent=True) or {}
+    conn = db()
+    cur = conn.execute(
+        """INSERT INTO prearrival(source,eta_minutes,age_years,sex,complaint,vitals_json,code,logged_by,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (b.get("source", "108"), b.get("eta_minutes"), b.get("age_years"), b.get("sex"),
+         b.get("complaint"), json.dumps(b.get("vitals") or {}), b.get("code") or "NONE",
+         auth.actor(), now()))
+    audit(conn, auth.actor(), "PREARRIVAL", "prearrival", cur.lastrowid,
+          {"code": b.get("code"), "eta": b.get("eta_minutes")})
+    conn.commit()
+    return jsonify({"id": cur.lastrowid}), 201
+
+
+@app.post("/api/prearrival/<int:pid>/close")
+@auth.requires("register")
+def close_prearrival(pid):
+    b = request.get_json(silent=True) or {}
+    st = "ARRIVED" if b.get("arrived") else "CANCELLED"
+    conn = db()
+    conn.execute("UPDATE prearrival SET status=? WHERE id=?", (st, pid))
+    audit(conn, auth.actor(), "PREARRIVAL_" + st, "prearrival", pid, {})
+    conn.commit()
+    return jsonify({"status": st})
+
+
+# --- FR-11 : Time-critical pathway timers ----------------------------
+@app.post("/api/encounters/<int:encounter_id>/timer")
+@auth.requires("triage")
+def stamp_timer(encounter_id):
+    b = request.get_json(silent=True) or {}
+    if b.get("kind") not in ("ECG", "CT", "NEEDLE", "BALLOON"):
+        return jsonify({"error": "bad_kind"}), 422
+    conn = db()
+    ts = now()
+    conn.execute("""INSERT INTO pathway_timer(encounter_id,kind,stamped_at,stamped_by)
+                    VALUES (?,?,?,?) ON CONFLICT(encounter_id,kind) DO NOTHING""",
+                 (encounter_id, b["kind"], ts, auth.actor()))
+    audit(conn, auth.actor(), "PATHWAY_TIMER", "pathway_timer", encounter_id,
+          {"kind": b["kind"], "at": ts})
+    conn.commit()
+    return jsonify({"kind": b["kind"], "stamped_at": ts})
+
+
+# --- FR-14 : Cashless / free-treatment entitlement -------------------
+@app.post("/api/encounters/<int:encounter_id>/cashless")
+@auth.requires("register")
+def set_cashless(encounter_id):
+    b = request.get_json(silent=True) or {}
+    conn = db()
+    conn.execute("UPDATE ed_encounter SET cashless_scheme=? WHERE id=?",
+                 (b.get("scheme") or None, encounter_id))
+    audit(conn, auth.actor(), "CASHLESS_SET", "ed_encounter", encounter_id,
+          {"scheme": b.get("scheme")})
+    conn.commit()
+    return jsonify({"scheme": b.get("scheme")})
+
+
+# --- FR-10 : MCI / mass-casualty mode --------------------------------
+_MCI_LEVEL = {"RED": 1, "YELLOW": 3, "GREEN": 4, "BLACK": None}
+
+
+@app.post("/api/mci/register")
+@auth.requires("register")
+def mci_register():
+    b = request.get_json(silent=True) or {}
+    tag = b.get("tag")
+    if tag not in _MCI_LEVEL:
+        return jsonify({"error": "bad_tag"}), 422
+    conn = db()
+    ts = now()
+    year = datetime.now(timezone.utc).year
+    n = conn.execute("SELECT COUNT(*) c FROM patient WHERE temp_id LIKE ?",
+                     (f"MCI-{year}-%",)).fetchone()["c"]
+    temp = f"MCI-{year}-{n + 1:04d}"
+    pid = conn.execute("INSERT INTO patient(uhid,temp_id,name,is_unknown,created_at) "
+                       "VALUES (NULL,?,NULL,1,?)", (temp, ts)).lastrowid
+    closed = tag == "BLACK"
+    eid = conn.execute(
+        """INSERT INTO ed_encounter(patient_id,arrival_ts,arrival_mode,is_mlc,status,mci_tag,closed_ts)
+           VALUES (?,?,?,?,?,?,?)""",
+        (pid, ts, "AMBULANCE_108", 1 if closed else 0,
+         "CLOSED" if closed else "TRIAGED", tag, ts if closed else None)).lastrowid
+    lvl = _MCI_LEVEL[tag]
+    if lvl:
+        conn.execute(
+            """INSERT INTO triage_event(encounter_id,triaged_ts,chief_complaint,red_flags_json,
+                   suggested_level,final_level,triaged_by) VALUES (?,?,?,?,?,?,?)""",
+            (eid, ts, f"MCI casualty ({tag})", "[]", lvl, lvl, auth.actor()))
+    audit(conn, auth.actor(), "MCI_REGISTER", "ed_encounter", eid, {"tag": tag, "temp_id": temp})
+    conn.commit()
+    return jsonify({"encounter_id": eid, "temp_id": temp, "tag": tag}), 201
+
+
+@app.get("/api/mci")
+@auth.login_required
+def mci_tally():
+    conn = db()
+    tally = {r["tag"]: r["c"] for r in conn.execute(
+        "SELECT mci_tag tag, COUNT(*) c FROM ed_encounter WHERE mci_tag IS NOT NULL GROUP BY mci_tag")}
+    cas = [dict(r) for r in conn.execute(
+        """SELECT e.id encounter_id, e.mci_tag tag, e.status,
+                  COALESCE(p.name, p.temp_id) label, e.arrival_ts
+           FROM ed_encounter e JOIN patient p ON p.id=e.patient_id
+           WHERE e.mci_tag IS NOT NULL ORDER BY e.id DESC""")]
+    return jsonify({"tally": tally, "casualties": cas, "total": sum(tally.values())})
+
+
+# --- AI-3 : Deterioration watch (rule-based; works even AI-off) ------
+@app.get("/api/ai/deterioration")
+@auth.login_required
+def ai_deterioration():
+    conn = db()
+    flagged = []
+    for r in conn.execute("""SELECT e.id, COALESCE(p.name,p.temp_id) label FROM ed_encounter e
+                             JOIN patient p ON p.id=e.patient_id
+                             WHERE e.status IN ('ARRIVED','TRIAGED')"""):
+        tri = conn.execute("SELECT hr,rr,sbp,spo2,gcs FROM triage_event WHERE encounter_id=? "
+                           "ORDER BY id DESC LIMIT 2", (r["id"],)).fetchall()
+        if len(tri) < 2:
+            continue
+        c, p = tri[0], tri[1]
+        reasons = []
+        if c["spo2"] and p["spo2"] and c["spo2"] < p["spo2"] - 2:
+            reasons.append(f"SpO2 {p['spo2']}->{c['spo2']}")
+        if c["sbp"] and p["sbp"] and c["sbp"] < p["sbp"] - 10:
+            reasons.append(f"SBP {p['sbp']}->{c['sbp']}")
+        if c["hr"] and p["hr"] and c["hr"] > p["hr"] + 15:
+            reasons.append(f"HR {p['hr']}->{c['hr']}")
+        if c["gcs"] and p["gcs"] and c["gcs"] < p["gcs"]:
+            reasons.append(f"GCS {p['gcs']}->{c['gcs']}")
+        if reasons:
+            flagged.append({"encounter_id": r["id"], "label": r["label"], "reasons": reasons})
+    return jsonify({"flagged": flagged})
+
+
+def _ai_draft(system, user, action, entity_id):
+    """Shared AI-2/AI-4 helper: advisory Ollama draft, gated + audited."""
+    from ai import config as _cfg
+    if not _cfg.AI_ENABLED:
+        return jsonify({"disabled": True, "advisory": True,
+                        "draft": "AI is disabled in this deployment; draft manually."}), 200
+    from ai import ollama_client as _oc
+    res = _oc.chat([{"role": "system", "content": system}, {"role": "user", "content": user}])
+    conn = db()
+    audit(conn, auth.actor(), action, "ai", entity_id or 0, {"ok": res.get("ok")})
+    conn.commit()
+    return jsonify({"draft": res.get("content", ""), "ok": res.get("ok"), "advisory": True})
+
+
+@app.post("/api/ai/mlc-narrative")   # AI-2
+@auth.requires("mlc")
+def ai_mlc_narrative():
+    b = request.get_json(silent=True) or {}
+    eid = b.get("encounter_id")
+    conn = db()
+    inj = [dict(x) for x in conn.execute(
+        "SELECT region,wound_type,description FROM injury_note WHERE encounter_id=?", (eid,))]
+    mlc = conn.execute("SELECT mlc_serial,mlc_type FROM mlc_case WHERE encounter_id=?", (eid,)).fetchone()
+    notes = "; ".join(f"{i['region']}: {i['wound_type']} ({i['description'] or ''})" for i in inj) \
+        or "no injuries recorded"
+    return _ai_draft(
+        "You draft a factual, neutral wound-certificate narrative for a physician to review, edit "
+        "and sign. State only what the injury notes describe; never infer weapon, cause or intent "
+        "beyond the notes. This is an ADVISORY draft only.",
+        f"MLC {mlc['mlc_serial'] if mlc else ''} ({mlc['mlc_type'] if mlc else ''}). "
+        f"Injury notes: {notes}. Draft the wound-certificate narrative.",
+        "AI_MLC_NARRATIVE", eid)
+
+
+@app.post("/api/ai/referral")   # AI-4
+@auth.requires("dispose")
+def ai_referral():
+    b = request.get_json(silent=True) or {}
+    eid = b.get("encounter_id")
+    conn = db()
+    enc = conn.execute("SELECT * FROM ed_encounter WHERE id=?", (eid,)).fetchone()
+    p = _patient_dict(conn, enc["patient_id"]) if enc else None
+    tri = conn.execute("SELECT * FROM triage_event WHERE encounter_id=? ORDER BY id DESC LIMIT 1",
+                       (eid,)).fetchone()
+    ctx = (f"Patient {(p or {}).get('name') or 'unknown'}, age {(p or {}).get('age_years')}. "
+           f"Complaint: {tri['chief_complaint'] if tri else ''}. "
+           f"Triage L{tri['final_level'] if tri else '?'}. "
+           f"Vitals HR {tri['hr'] if tri else ''} SpO2 {tri['spo2'] if tri else ''} "
+           f"SBP {tri['sbp'] if tri else ''}.")
+    return _ai_draft(
+        "Draft a structured inter-facility referral summary (reason for referral, clinical status, "
+        "vitals, interventions given, specific request) for physician review before transmission. "
+        "ADVISORY draft only; do not invent findings not provided.",
+        ctx + " Draft the referral summary.", "AI_REFERRAL", eid)
 
 
 # --- SPA shell --------------------------------------------------------
