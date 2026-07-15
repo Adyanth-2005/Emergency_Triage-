@@ -14,7 +14,7 @@ tamper‑evident audit chain, and an optional local Advanced‑RAG AI copilot. A
 
 | FR | Requirement | Status | Evidence |
 |---|---|---|---|
-| FR‑1 | Structured triage — AIIMS‑TP 5‑level scale (config data, not code), vitals, advisory auto‑suggest recomputed server‑side, override reason enforced by DB `CHECK` | ✅ | `POST /api/triage`, `triage_rules.py` · `test_e2e` §2–4 |
+| FR‑1 | Structured triage — AIIMS‑TP 5‑level scale (config data, not code), vitals, advisory auto‑suggest recomputed server‑side, override reason enforced by DB `CHECK` | Done | `POST /api/triage`, `triage_rules.py` · `test_e2e` §2–4 |
 | FR‑2 | Quick registration — treat‑first: empty POST succeeds, temp ID issued, nothing blocks care | Done | `POST /api/quick-reg` · `test_e2e` §1 |
 | FR‑3 | ED tracking board — acuity, elapsed time, breach flags; door‑to‑doctor via `/attend`; bay allocation | Done | `GET /api/board`, `POST /attend`, `/bay` · `test_m3` §5 |
 | FR‑4 | MLC module — gapless `MLC/YYYY/nnnn` serial (atomic counter), police‑intimation log (officer/badge/mode), POCSO non‑dismissible flag | Done | `POST /api/mlc`, `/intimation` · `test_e2e` §5 |
