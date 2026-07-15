@@ -77,6 +77,8 @@ CREATE TABLE ed_encounter (
     first_physician_at TEXT,
     attended_by        TEXT,
     bay                TEXT,   -- FR-3: charge-nurse bay / location allocation
+    cashless_scheme    TEXT,   -- FR-14: MV_ACT / GOOD_SAMARITAN / PMJAY / NONE
+    mci_tag            TEXT,   -- FR-10: RED | YELLOW | GREEN | BLACK (mass-casualty)
     closed_ts     TEXT,
     CHECK (status <> 'CLOSED' OR closed_ts IS NOT NULL)
 );
@@ -216,6 +218,84 @@ CREATE TABLE disposition (
             length(trim(mlc_warning_reason)) >= 10))
 );
 CREATE INDEX idx_disp_type ON disposition(type);
+
+-- ---------------------------------------------------------------------
+-- FR-5 : Injury documentation (body-map annotations + wound descriptions).
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS injury_note (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    encounter_id  INTEGER NOT NULL REFERENCES ed_encounter(id),
+    region        TEXT    NOT NULL,   -- body-map region key
+    wound_type    TEXT    NOT NULL,   -- laceration/abrasion/contusion/burn/firearm/...
+    description   TEXT,
+    photo_consent TEXT,               -- consent basis if a photo is referenced (DPDP)
+    photo_ref     TEXT,               -- external reference only; no image stored here
+    recorded_by   TEXT    NOT NULL,
+    recorded_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_injury_enc ON injury_note(encounter_id);
+
+-- ---------------------------------------------------------------------
+-- FR-6 : Evidence / chain-of-custody log (handed to police, with signature ref).
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS evidence_item (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    mlc_case_id   INTEGER NOT NULL REFERENCES mlc_case(id),
+    item          TEXT    NOT NULL,   -- clothing / bullet / sample / weapon...
+    description   TEXT,
+    collected_by  TEXT    NOT NULL,
+    handed_to     TEXT,               -- constable name
+    handed_badge  TEXT,
+    signature_ref TEXT,               -- receipt/diary/acknowledgement reference
+    recorded_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_mlc ON evidence_item(mlc_case_id);
+
+-- ---------------------------------------------------------------------
+-- FR-7 : Mandatory-reporting acknowledgements (statute-cited; dismissal recorded).
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS reporting_ack (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    encounter_id  INTEGER NOT NULL REFERENCES ed_encounter(id),
+    duty          TEXT    NOT NULL,   -- POCSO / FOUL_PLAY / IDSP_BITE / BURNS / ...
+    action        TEXT    NOT NULL,   -- REPORTED | DISMISSED
+    justification TEXT,               -- required to dismiss
+    acted_by      TEXT    NOT NULL,
+    acted_at      TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reporting_enc ON reporting_ack(encounter_id);
+
+-- ---------------------------------------------------------------------
+-- FR-9 : Pre-arrival / ambulance intake (with time-critical code activation).
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS prearrival (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    source        TEXT    NOT NULL,   -- 108 / 102 / PRIVATE / POLICE
+    eta_minutes   INTEGER,
+    age_years     INTEGER,
+    sex           TEXT,
+    complaint     TEXT,
+    vitals_json   TEXT,
+    code          TEXT,               -- STEMI | STROKE | TRAUMA | NONE
+    status        TEXT    NOT NULL DEFAULT 'INBOUND'  -- INBOUND | ARRIVED | CANCELLED
+                          CHECK (status IN ('INBOUND','ARRIVED','CANCELLED')),
+    encounter_id  INTEGER REFERENCES ed_encounter(id),
+    logged_by     TEXT    NOT NULL,
+    created_at    TEXT    NOT NULL
+);
+
+-- ---------------------------------------------------------------------
+-- FR-11 : Time-critical pathway timers (door-to-ECG/CT/needle/balloon).
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS pathway_timer (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    encounter_id  INTEGER NOT NULL REFERENCES ed_encounter(id),
+    kind          TEXT    NOT NULL,   -- ECG | CT | NEEDLE | BALLOON
+    stamped_at    TEXT    NOT NULL,
+    stamped_by    TEXT    NOT NULL,
+    UNIQUE (encounter_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_timer_enc ON pathway_timer(encounter_id);
 
 -- ---------------------------------------------------------------------
 -- PRD-05 §7 NFR (Audit): "every timestamp medico-legally defensible;

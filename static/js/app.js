@@ -204,6 +204,10 @@ const NAV = [
     { href:"#/", label:"Dashboard", icon:"dashboard" },
     { href:"#/board", label:"Tracking board", icon:"board", count:"active" },
   ]},
+  { grp:"Emergency response", items:[
+    { href:"#/prearrival", label:"Pre-arrival", icon:"siren", count:"inbound" },
+    { href:"#/mci", label:"MCI mode", icon:"activity" },
+  ]},
   { grp:"Patient flow", items:[
     { href:"#/register", label:"Quick registration", icon:"userplus" },
     { href:"#/patients", label:"ED register", icon:"users" },
@@ -278,8 +282,10 @@ function renderShell() {
 function paintCounts() {
   $$("[data-count]").forEach(el => {
     const k = el.getAttribute("data-count");
-    const v = k === "active" ? state.counts.active_encounters : k === "mlc" ? state.counts.mlc_active : null;
-    if (v == null) { el.style.display = "none"; } else { el.style.display=""; el.textContent = v; }
+    const v = k === "active" ? state.counts.active_encounters
+            : k === "mlc" ? state.counts.mlc_active
+            : k === "inbound" ? state.counts.inbound : null;
+    if (!v) { el.style.display = "none"; } else { el.style.display=""; el.textContent = v; }
   });
 }
 function updateChainPill() {
@@ -454,9 +460,11 @@ async function viewDashboard() {
   if (!v.querySelector(".dash")) v.innerHTML = skeleton();
   setCrumbs(["Operations","Dashboard"]);
 
-  const [rk, rb] = await Promise.all([api.get("/api/dashboard"), api.get("/api/board")]);
+  const [rk, rb, rd] = await Promise.all([
+    api.get("/api/dashboard"), api.get("/api/board"), api.get("/api/ai/deterioration")]);
   if (!rk.ok || !rb.ok) { v.innerHTML = offlineState(); return; }
   const d = rk.data; state.counts = d; paintCounts(); updateChainPill();
+  const deteriorating = (rd.ok && rd.data && rd.data.flagged) ? rd.data.flagged : [];
 
   // Active only. Sort: acuity first, then longest wait. This IS the treat-next order.
   const active = rb.data.filter(r => r.status !== "CLOSED");
@@ -530,6 +538,14 @@ async function viewDashboard() {
       <span class="cs-list">${critical.slice(0,4).map(r=>
         `<a href="#/encounter/${r.encounter_id}" class="cs-p"><span class="lvl-dot ${levelClass(r.level)}">${r.level}</span>${esc(r.display_name)}</a>`
       ).join("")}${critical.length>4?`<span class="muted">+${critical.length-4} more</span>`:""}</span>
+    </div>` : ""}
+
+    ${(clinical && deteriorating.length) ? `<div class="deter-strip" title="Rule-based deterioration watch (AI-3)">
+      <span class="ds-ic">${icon("pulse")}</span>
+      <span class="ds-t"><b>${deteriorating.length}</b> patient${deteriorating.length===1?"":"s"} trending worse since last vitals</span>
+      <span class="cs-list">${deteriorating.slice(0,4).map(f=>
+        `<a href="#/encounter/${f.encounter_id}" class="ds-p">${esc(f.label)} <span class="ds-why mono">${esc((f.reasons||[]).join(" · "))}</span></a>`
+      ).join("")}${deteriorating.length>4?`<span class="muted">+${deteriorating.length-4} more</span>`:""}</span>
     </div>` : ""}
 
     <div class="dash-kpis">
@@ -729,6 +745,7 @@ function viewRegister() {
         <div class="field f-sex"><label>Sex</label><select class="sel" name="sex"><option value="">—</option><option>M</option><option>F</option><option>O</option><option value="UNKNOWN">Unknown</option></select></div>
         <div class="field f-phone"><label>Phone</label><input class="inp" name="phone" inputmode="tel" autocomplete="off"></div>
         <div class="field f-arr"><label>Arrival mode</label><select class="sel" name="arrival_mode">${modes.map(m=>`<option value="${m}">${pretty(m)}</option>`).join("")}</select></div>
+        <div class="field f-cashless"><label>Free-treatment scheme <span class="muted">(FR-14)</span></label><select class="sel" name="cashless_scheme">${CASHLESS_SCHEMES.map(s=>`<option value="${s==="NONE"?"":s}">${s==="NONE"?"Self-pay / none":pretty(s)}</option>`).join("")}</select></div>
         <div class="field f-brought"><label>Brought by <span class="muted">(optional — Good Samaritan; may decline)</span></label><input class="inp" name="brought_by" autocomplete="off"></div>
         <label class="chk reg-mlc"><input type="checkbox" name="mlc"> <span>Suspected medico-legal case</span></label>
       </div>
@@ -744,7 +761,8 @@ function viewRegister() {
     e.preventDefault();
     const f = new FormData(e.target);
     const body = { actor: actor(), name: f.get("name")||undefined, age_years: f.get("age_years")?+f.get("age_years"):undefined,
-      sex: f.get("sex")||undefined, phone: f.get("phone")||undefined, arrival_mode: f.get("arrival_mode"), brought_by: f.get("brought_by")||undefined };
+      sex: f.get("sex")||undefined, phone: f.get("phone")||undefined, arrival_mode: f.get("arrival_mode"),
+      cashless_scheme: f.get("cashless_scheme")||undefined, brought_by: f.get("brought_by")||undefined };
     const r = await api.post("/api/quick-reg", body);
     if (r.ok) {
       toast("ok","Patient registered", (r.data.temp_id?`Temp ID ${r.data.temp_id} · `:"") + "proceed to triage");
@@ -939,6 +957,7 @@ async function viewEncounter(id) {
   if (!closed && can("triage")) actions.push(`<a class="btn" href="#/triage/${id}">${icon("steth")} ${D.triages.length?"Re-triage":"Triage"}</a>`);
   if (!e.is_mlc && can("mlc")) actions.push(`<button class="btn coral" data-a="mlc">${icon("gavel")} Open MLC</button>`);
   if (e.is_mlc && D.mlc && can("intimation")) actions.push(`<button class="btn" data-a="intim">${icon("phone")} Log intimation</button>`);
+  if (!closed && can("dispose")) actions.push(`<button class="btn" data-a="refer">${icon("sparkles")} AI referral</button>`);
   if (!closed && can("dispose")) actions.push(`<button class="btn primary" data-a="disp">${icon("file")} Disposition</button>`);
 
   const noActions = `<span class="muted" style="font-size:12px">${icon("info")} Your role has no actions on this encounter</span>`;
@@ -969,7 +988,8 @@ async function viewEncounter(id) {
           <dt>Status</dt><dd>${statusBadge(e.status)}</dd>
           <dt>Bay</dt><dd>${e.bay?`<span class="badge mono">${esc(e.bay)}</span>`:'<span class="muted">—</span>'}${(!closed&&can("triage"))?` <button class="btn sm ghost" data-a="bay" style="margin-left:6px;height:24px;padding:0 9px">${e.bay?"Change":"Assign"}</button>`:""}</dd>
           ${e.first_physician_at?`<dt>Door-to-doctor</dt><dd class="mono">${fmtTime(e.first_physician_at)}</dd>`:""}
-          <dt>Current level</dt><dd><span class="lvl ${levelClass(e.current_level||latest&&latest.final_level)}">${(latest&&latest.final_level)?("L"+latest.final_level):"—"}</span></dd>
+          <dt>Entitlement</dt><dd>${e.cashless_scheme?`<span class="badge ok">${esc(pretty(e.cashless_scheme))}</span>`:'<span class="muted">Self-pay / none</span>'}${(!closed&&can("register"))?` <button class="btn sm ghost" data-a="cashless" style="margin-left:6px;height:24px;padding:0 9px">${e.cashless_scheme?"Change":"Set"}</button>`:""}</dd>
+          <dt>Current level</dt><dd><span class="lvl ${levelClass(latest&&latest.final_level)}">${(latest&&latest.final_level)?("L"+latest.final_level):"—"}</span></dd>
         </dl>
       </section>
 
@@ -979,7 +999,13 @@ async function viewEncounter(id) {
       </section>
     </div>
 
+    ${reTriageBanner(e, latest, closed)}
+    ${reportingStrip(D.reporting, id, closed)}
     ${latest?aiTriageCard(latest):""}
+    <div class="enc-grid">
+      ${injuriesStrip(D.injuries||[], id, closed)}
+      ${timersStrip(D.timers||[], e, id, closed)}
+    </div>
     ${e.is_mlc&&D.mlc?mlcStrip(D.mlc, D.intimations, id):""}
     ${D.disposition?dispositionStrip(D.disposition):""}
   </div>`;
@@ -991,6 +1017,246 @@ async function viewEncounter(id) {
   wire("intim", () => openIntimationModal(D.mlc.id, id));
   wire("disp", () => openDispositionModal(id, D.intimation_pending));
   wire("bay", () => openBayModal(id, e.bay));
+  wire("cashless", () => openCashlessModal(id, e.cashless_scheme));
+  wire("refer", () => openReferralModal(id, name));
+  wire("add-injury", () => openInjuryModal(id));
+  $$('[data-timer]', v).forEach(b => b.onclick = () => stampTimer(id, b.dataset.timer));
+  $$('[data-duty]', v).forEach(b => b.onclick = () =>
+    actReporting(id, b.dataset.duty, b.dataset.act, b.dataset.label));
+}
+
+/* ---- FR-12 : re-triage-due prompt ----
+   A waiting patient whose acuity window has elapsed should be reassessed.
+   Client-computed from data already on screen; never blocks, only nudges. */
+function reTriageBanner(e, latest, closed) {
+  if (closed || !latest || e.status === "IN_TREATMENT") return "";
+  if (latest.final_level == null) return "";
+  const s = state.scale.find(x => x.level === latest.final_level);
+  const target = s ? s.max_wait_minutes : null;
+  if (target == null) return "";
+  const since = (Date.now() - new Date(latest.triaged_ts).getTime()) / 60000;
+  if (since <= Math.max(target, 15)) return "";
+  return `<div class="enc-warn retri">${icon("clock")}<div>
+    <div class="wt">Re-triage due</div>
+    <div class="wm">Last assessed ${fmtWait(since)} ago — past the L${latest.final_level} window
+      (${target===0?"immediate":"≤"+target+"m"}). Reassess for deterioration (FR-12).</div>
+    ${can("triage")?`<a class="btn sm coral mt3" href="#/triage/${e.id||""}">${icon("steth")} Re-triage now</a>`:""}
+  </div></div>`;
+}
+
+/* ---- FR-7 : mandatory-reporting duties strip ---- */
+function reportingStrip(rep, encId, closed) {
+  if (!rep || !rep.duties || !rep.duties.length) return "";
+  const ackFor = c => (rep.acks || []).filter(a => a.duty === c).slice(-1)[0];
+  return `<section class="enc-sec report-sec">
+    <div class="enc-h"><span>${icon("shield")} Mandatory reporting</span>
+      <span class="enc-h-sub">${rep.duties.length} statutory dut${rep.duties.length===1?"y":"ies"} raised</span></div>
+    <ul class="duty-list">
+      ${rep.duties.map(d => {
+        const ack = ackFor(d.code);
+        const done = ack && ack.action === "REPORTED";
+        const dism = ack && ack.action === "DISMISSED";
+        return `<li class="duty ${d.hard?"hard":""} ${done?"done":""} ${dism?"dism":""}">
+          <span class="duty-sev ${d.severity==="HIGH"?"hi":""}">${d.hard?icon("alert"):icon("flag")}</span>
+          <div class="duty-body">
+            <div class="duty-label">${esc(d.label)}${d.hard?`<span class="badge pocso" style="margin-left:6px">mandatory</span>`:""}</div>
+            <div class="duty-stat mono">${esc(d.statute)}</div>
+            ${ack?`<div class="duty-ack">${done?icon("check"):icon("info")} ${esc(pretty(ack.action))} by ${esc(ack.acted_by)} · ${fmtTs(ack.acted_at)}${ack.justification?` — ${esc(ack.justification)}`:""}</div>`:""}
+          </div>
+          ${(!closed && !ack)?`<div class="duty-acts">
+            <button class="btn sm primary" data-duty="${esc(d.code)}" data-act="REPORTED" data-label="${esc(d.label)}">${icon("check")} Reported</button>
+            <button class="btn sm ghost" data-duty="${esc(d.code)}" data-act="DISMISSED" data-label="${esc(d.label)}">Dismiss</button>
+          </div>`:""}
+        </li>`;
+      }).join("")}
+    </ul>
+    <div class="hint">${icon("info")} Deterministic rule engine (FR-7). Dismissing a duty records a reason on the audit chain; POCSO duties are non-optional (§19-21).</div>
+  </section>`;
+}
+async function actReporting(encId, duty, action, label) {
+  if (action === "DISMISSED") {
+    openModal({ title:"Dismiss reporting duty", icon:"flag",
+      body:`<form id="dsmForm"><div class="warn-banner" style="margin-bottom:14px">${icon("alert")}<div>
+        <div class="wt">${esc(label||duty)}</div>
+        <div class="wm">Dismissing a mandatory-reporting duty is recorded against your name on the tamper-evident audit chain. Give a clear clinical/administrative reason.</div></div></div>
+        <div class="field"><label>Justification <span class="req">*</span> <span class="muted">(min 10 chars)</span></label>
+          <textarea class="inp" id="dsmReason" rows="3" placeholder="e.g. Duplicate of MLC/2026/0031 already reported; single intimation covers both."></textarea></div></form>`,
+      footer:`<button class="btn ghost" data-close>Cancel</button><button class="btn coral" id="dsmSave">Record dismissal</button>` });
+    $("[data-close]").onclick = closeOverlay;
+    $("#dsmSave").onclick = async () => {
+      const j = $("#dsmReason").value.trim();
+      if (j.length < 10) { $("#dsmReason").classList.add("err"); toast("err","Reason too short","Minimum 10 characters."); return; }
+      const r = await api.post(`/api/encounters/${encId}/reporting/ack`, { duty, action, justification:j });
+      if (r.ok) { closeOverlay(); toast("ok","Dismissal recorded", label||duty); lwEvent("forge",{encounter:+encId}); viewEncounter(encId); }
+      else toast("err","Could not record", (r.data&&r.data.detail)||("HTTP "+r.status));
+    };
+    return;
+  }
+  const r = await api.post(`/api/encounters/${encId}/reporting/ack`, { duty, action });
+  if (r.ok) { toast("ok","Reported", label||duty); lwEvent("forge",{encounter:+encId}); viewEncounter(encId); }
+  else toast("err","Could not record", (r.data&&r.data.error)||("HTTP "+r.status));
+}
+
+/* ---- FR-5 : injury documentation strip + body-map modal ---- */
+const BODY_REGIONS = {
+  head:"Head", face:"Face", neck:"Neck", chest:"Chest", abdomen:"Abdomen",
+  pelvis:"Pelvis", back:"Back", left_arm:"Left arm", right_arm:"Right arm",
+  left_hand:"Left hand", right_hand:"Right hand", left_leg:"Left leg",
+  right_leg:"Right leg", left_foot:"Left foot", right_foot:"Right foot",
+};
+const WOUND_TYPES = ["laceration","abrasion","contusion","incised","puncture","firearm","burn","fracture","bite","swelling","other"];
+function injuriesStrip(injuries, encId, closed) {
+  return `<section class="enc-sec">
+    <div class="enc-h"><span>${icon("edit")} Injury documentation</span>
+      <span class="enc-h-sub">${injuries.length} note(s)</span>
+      ${(!closed && can("triage"))?`<button class="btn sm" data-a="add-injury" style="margin-left:auto">${icon("plus")} Add injury</button>`:""}</div>
+    ${injuries.length?`<ul class="injury-list">${injuries.map(i=>`
+      <li><span class="inj-dot"></span>
+        <div><div class="inj-hd"><b>${esc(BODY_REGIONS[i.region]||pretty(i.region))}</b> — ${esc(pretty(i.wound_type))}</div>
+          ${i.description?`<div class="cell-sub">${esc(i.description)}</div>`:""}
+          <div class="muted" style="font-size:11px">${esc(i.recorded_by)} · ${fmtTs(i.recorded_at)}${i.photo_consent?` · photo consent: ${esc(i.photo_consent)}`:""}</div></div>
+      </li>`).join("")}</ul>`
+    : emptyInline("No injuries recorded")}
+  </section>`;
+}
+function bodyMap(sel) {
+  const hot = (k, shape) => `<g class="bm-region ${sel===k?"sel":""}" data-region="${k}">${shape}</g>`;
+  return `<svg class="bodymap" viewBox="0 0 200 260" role="group" aria-label="Body map">
+    <g class="bm-figure" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+      <circle cx="100" cy="30" r="20"/>
+      <path d="M88 50 h24 l6 8 h14 l14 60 -14 5 -8 -34 v40 l8 78 -16 0 -8 -66 -8 66 -16 0 8 -78 v-40 l-8 34 -14 -5 14 -60 h14 z"/>
+    </g>
+    <g class="bm-hot">
+      ${hot("head", '<circle cx="100" cy="30" r="20"/>')}
+      ${hot("neck", '<rect x="90" y="50" width="20" height="10" rx="3"/>')}
+      ${hot("chest", '<rect x="80" y="60" width="40" height="30" rx="5"/>')}
+      ${hot("abdomen", '<rect x="82" y="90" width="36" height="26" rx="5"/>')}
+      ${hot("pelvis", '<rect x="82" y="116" width="36" height="22" rx="5"/>')}
+      ${hot("right_arm", '<rect x="52" y="60" width="22" height="56" rx="9"/>')}
+      ${hot("left_arm", '<rect x="126" y="60" width="22" height="56" rx="9"/>')}
+      ${hot("right_hand", '<circle cx="60" cy="122" r="9"/>')}
+      ${hot("left_hand", '<circle cx="140" cy="122" r="9"/>')}
+      ${hot("right_leg", '<rect x="80" y="140" width="18" height="80" rx="8"/>')}
+      ${hot("left_leg", '<rect x="102" y="140" width="18" height="80" rx="8"/>')}
+      ${hot("right_foot", '<circle cx="89" cy="230" r="9"/>')}
+      ${hot("left_foot", '<circle cx="111" cy="230" r="9"/>')}
+    </g></svg>`;
+}
+function openInjuryModal(encId) {
+  let region = null;
+  openModal({ title:"Document injury", icon:"edit", wide:true,
+    body:`<div class="injury-modal">
+      <div class="bm-wrap">${bodyMap(null)}
+        <div class="bm-picked mono" id="bmPicked">Tap a region on the figure ↑ or pick below</div>
+        <div class="bm-back"><button class="btn sm ghost" type="button" data-region-btn="back">${icon("chevronL")} Mark posterior / back</button></div>
+      </div>
+      <form id="injForm" class="injury-form">
+        <div class="field"><label>Region <span class="req">*</span></label>
+          <select class="sel" id="injRegion">${Object.entries(BODY_REGIONS).map(([k,l])=>`<option value="${k}">${esc(l)}</option>`).join("")}</select></div>
+        <div class="field"><label>Wound type <span class="req">*</span></label>
+          <select class="sel" name="wound_type">${WOUND_TYPES.map(w=>`<option value="${w}">${pretty(w)}</option>`).join("")}</select></div>
+        <div class="field"><label>Description</label><textarea class="inp" name="description" rows="3" placeholder="Size, shape, margins, colour, laterality — objective terms only."></textarea></div>
+        <div class="field"><label>Photo consent basis <span class="muted">(optional — DPDP)</span></label>
+          <select class="sel" name="photo_consent"><option value="">— no photo</option><option>Patient consent</option><option>Guardian consent</option><option>Police requisition</option></select></div>
+        <div class="hint">${icon("info")} Objective findings only — never infer weapon, cause or intent. This feeds the wound certificate (AI-2 drafts a narrative for physician sign-off).</div>
+      </form></div>`,
+    footer:`<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="injSave">${icon("check")} Save injury</button>` });
+  const setRegion = k => {
+    region = k;
+    $("#injRegion").value = k;
+    $("#bmPicked").textContent = "Selected: " + (BODY_REGIONS[k]||pretty(k));
+    $$(".bm-region").forEach(g => g.classList.toggle("sel", g.dataset.region === k));
+  };
+  $$(".bm-region").forEach(g => g.onclick = () => setRegion(g.dataset.region));
+  $("[data-region-btn]").onclick = () => setRegion("back");
+  $("#injRegion").onchange = e => setRegion(e.target.value);
+  setRegion("head");
+  $("[data-close]").onclick = closeOverlay;
+  $("#injSave").onclick = async () => {
+    const f = new FormData($("#injForm"));
+    const body = { region, wound_type:f.get("wound_type"),
+      description:f.get("description")||undefined, photo_consent:f.get("photo_consent")||undefined };
+    const r = await api.post(`/api/encounters/${encId}/injury`, body);
+    if (r.ok) { closeOverlay(); toast("ok","Injury recorded", (BODY_REGIONS[region]||region)+" · "+pretty(body.wound_type)); lwEvent("forge",{encounter:+encId}); viewEncounter(encId); }
+    else toast("err","Could not save injury", (r.data&&r.data.error)||("HTTP "+r.status));
+  };
+}
+
+/* ---- FR-11 : time-critical pathway timers ---- */
+const PATHWAYS = [
+  { k:"ECG",    label:"Door-to-ECG",    target:10, hint:"STEMI ≤10 min" },
+  { k:"CT",     label:"Door-to-CT",     target:25, hint:"Stroke ≤25 min" },
+  { k:"NEEDLE", label:"Door-to-needle", target:60, hint:"Thrombolysis ≤60 min" },
+  { k:"BALLOON",label:"Door-to-balloon",target:90, hint:"PCI ≤90 min" },
+];
+function timersStrip(timers, e, encId, closed) {
+  const by = {}; timers.forEach(t => by[t.kind] = t);
+  return `<section class="enc-sec">
+    <div class="enc-h"><span>${icon("clock")} Time-critical pathways</span><span class="enc-h-sub">door-to-intervention</span></div>
+    <div class="timer-grid">
+      ${PATHWAYS.map(p => {
+        const t = by[p.k];
+        let mins = null, breach = false;
+        if (t) { mins = Math.round((new Date(t.stamped_at) - new Date(e.arrival_ts))/60000); breach = mins > p.target; }
+        return `<div class="timer ${t?(breach?"over":"done"):""}">
+          <div class="tm-l">${esc(p.label)}</div>
+          ${t?`<div class="tm-val">${mins}<small>min</small></div>
+              <div class="tm-ft ${breach?"over":""}">${breach?"past ":"within "}${p.target}m · ${fmtTime(t.stamped_at)}</div>`
+             :`<div class="tm-ft">${esc(p.hint)}</div>
+               ${(!closed&&can("triage"))?`<button class="btn sm" data-timer="${p.k}">${icon("check")} Stamp now</button>`:`<span class="muted mono">not stamped</span>`}`}
+        </div>`;
+      }).join("")}
+    </div>
+  </section>`;
+}
+async function stampTimer(encId, kind) {
+  const r = await api.post(`/api/encounters/${encId}/timer`, { kind });
+  if (r.ok) { toast("ok","Pathway stamped", kind+" · "+fmtTime(r.data.stamped_at)); lwEvent("forge",{encounter:+encId}); viewEncounter(encId); }
+  else toast("err","Could not stamp", (r.data&&r.data.error)||("HTTP "+r.status));
+}
+
+/* ---- FR-14 : cashless / free-treatment entitlement ---- */
+const CASHLESS_SCHEMES = ["NONE","MV_ACT","GOOD_SAMARITAN","PMJAY","STATE_SCHEME","ESI","CGHS","INSURANCE","OTHER"];
+function openCashlessModal(encId, current) {
+  openModal({ title:"Free-treatment entitlement", icon:"shieldcheck",
+    body:`<form id="cashForm"><div class="field"><label>Scheme / basis</label>
+      <select class="sel" name="scheme">${CASHLESS_SCHEMES.map(s=>`<option value="${s==="NONE"?"":s}" ${((current||"")===s||(!current&&s==="NONE"))?"selected":""}>${s==="NONE"?"Self-pay / none":pretty(s)}</option>`).join("")}</select></div>
+      <div class="hint">${icon("info")} MV Act 2019 golden-hour + Good-Samaritan cover mean an RTA victim's care is <b>never</b> delayed for payment. Recording the basis here protects the patient and the hospital (FR-14).</div></form>`,
+    footer:`<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="cashSave">${icon("check")} Save</button>` });
+  $("[data-close]").onclick = closeOverlay;
+  $("#cashSave").onclick = async () => {
+    const scheme = $("#cashForm").scheme.value || null;
+    const r = await api.post(`/api/encounters/${encId}/cashless`, { scheme });
+    if (r.ok) { closeOverlay(); toast("ok","Entitlement saved", scheme?pretty(scheme):"self-pay"); viewEncounter(encId); }
+    else toast("err","Could not save", (r.data&&r.data.error)||("HTTP "+r.status));
+  };
+}
+
+/* ---- AI-4 : referral draft (advisory; Ollama when enabled, else manual) ---- */
+function openReferralModal(encId, name) {
+  openModal({ title:"AI referral draft", icon:"sparkles", wide:true,
+    body:`<div class="ai-card" style="margin:0"><div class="ai-hd"><span class="spark">${icon("sparkles")}</span>
+        <span class="t">Inter-facility referral — advisory draft</span><span class="adv">Physician must review & sign</span></div>
+      <div class="ai-bd" id="refBody"><div class="muted">${icon("clock")} Generating a structured referral summary for ${esc(name||"this patient")}…</div></div></div>`,
+    footer:`<button class="btn ghost" data-close>Close</button><button class="btn" id="refCopy" disabled>${icon("copy")} Copy</button>` });
+  $("[data-close]").onclick = closeOverlay;
+  aiDraft(`/api/ai/referral`, { encounter_id:+encId }, "refBody", "refCopy");
+}
+async function aiDraft(path, body, bodyId, copyId) {
+  const r = await api.post(path, body);
+  const el = $("#"+bodyId); if (!el) return;
+  const d = r.data || {};
+  if (!r.ok) { el.innerHTML = `<div class="muted">${icon("alert")} Draft unavailable (HTTP ${r.status}). Compose manually.</div>`; return; }
+  if (d.disabled) {
+    el.innerHTML = `<div class="hint" style="margin:0">${icon("info")} Local AI is off in this deployment (privacy-safe demo). The draft engine runs against a local Ollama model when <span class="mono">AI_ENABLED=1</span>. Compose the summary manually below.</div>
+      <textarea class="inp mt3" rows="8" placeholder="Referral summary…"></textarea>`;
+    return;
+  }
+  const text = d.draft || "(empty draft)";
+  el.innerHTML = `<pre class="ai-draft">${esc(text)}</pre>
+    <div class="muted mt3" style="font-size:11px">${icon("info")} Advisory only — generated locally${d.ok?"":" (model unreachable — fallback text)"}. Nothing is sent anywhere; you own every word before it leaves the department.</div>`;
+  const cp = $("#"+copyId);
+  if (cp) { cp.disabled = false; cp.onclick = () => { navigator.clipboard?.writeText(text); toast("ok","Copied","Draft on clipboard"); }; }
 }
 function openBayModal(encId, current) {
   openModal({ title:"Assign bay / location", icon:"bed",
@@ -1245,12 +1511,17 @@ async function viewMlcDetail(id) {
   const r = await api.get("/api/mlc/"+id);
   if (!r.ok) { v.innerHTML = r.status===404?notFound("MLC case not found"):offlineState(); return; }
   const { mlc:m, encounter:e, patient:p, intimations } = r.data;
+  const evidence = r.data.evidence || [];
+  const injuries = r.data.injuries || [];
   const name = p?(p.name||"[UNKNOWN] "+(p.temp_id||"")):"—";
   v.innerHTML = `<div class="view-inner view-anim">
     <div class="page-head"><div class="h"><div class="greet mono" style="color:var(--coral-2)">${esc(m.mlc_serial)}</div>
       <h1>${pretty(m.mlc_type)} ${m.pocso_flag?'<span class="badge pocso" style="vertical-align:middle">POCSO</span>':""}</h1>
       <div class="sub">status ${esc(m.status||"REGISTERED")} · <a href="#/encounter/${e.id}" style="color:var(--teal-ink)">encounter ENC-${e.id}</a> · ${esc(name)}</div></div>
-      <div class="actions">${can("intimation")?`<button class="btn coral" id="addIntim">${icon("phone")} Log intimation</button>`:""}</div></div>
+      <div class="actions">
+        ${can("mlc")?`<button class="btn" id="mlcNarr">${icon("sparkles")} MLC narrative</button>`:""}
+        ${can("mlc")?`<button class="btn" id="addEvi">${icon("shield")} Log evidence</button>`:""}
+        ${can("intimation")?`<button class="btn coral" id="addIntim">${icon("phone")} Log intimation</button>`:""}</div></div>
 
     ${m.pocso_flag?`<div class="warn-banner">${icon("alert")}<div><div class="wt">POCSO mandatory reporting</div><div class="wm">§19-21 — reporting to SJPU/police is mandatory and non-reporting is itself a punishable offence.</div></div></div>`:""}
 
@@ -1262,13 +1533,58 @@ async function viewMlcDetail(id) {
           <dt>Opened</dt><dd class="mono">${fmtTs(m.opened_ts)}</dd>
           <dt>By</dt><dd>${esc(m.opened_by)}</dd>
           <dt>Basis</dt><dd class="mono">BNSS §194-196</dd>
+          <dt>Injuries</dt><dd>${injuries.length?`${injuries.length} documented · <a href="#/encounter/${e.id}" style="color:var(--teal-ink)">view</a>`:'<span class="muted">none</span>'}</dd>
         </dl></div></div>
       <div class="card span-2"><div class="hd"><span class="card-title-icn">${icon("phone")}</span><h3>Police intimations</h3><span class="sub">the record of communication</span></div>
         <div class="bd">${intimations.length?`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Method</th><th>Station</th><th>Officer</th><th>Badge</th><th>By</th></tr></thead>
           <tbody>${intimations.map(x=>`<tr><td class="mono cell-sub">${fmtTs(x.intimated_ts)}</td><td>${pretty(x.mode)}</td><td>${esc(x.police_station)}</td><td>${esc(x.constable_name)}</td><td class="mono">${esc(x.constable_badge)}</td><td class="cell-sub">${esc(x.logged_by)}</td></tr>`).join("")}</tbody></table></div>`
           :`<div class="warn-banner" style="margin:0">${icon("alert")}<div><div class="wt">No intimation logged</div><div class="wm">Disposition of this encounter will warn until an intimation is recorded.</div></div></div>`}</div></div>
-    </div></div>`;
+    </div>
+
+    <div class="card mt4"><div class="hd"><span class="card-title-icn">${icon("shield")}</span><h3>Evidence &amp; chain of custody</h3>
+      <span class="sub">clothing, samples, projectiles — handed to police under signature (FR-6)</span></div>
+      <div class="bd">${evidence.length?`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Item</th><th>Description</th><th>Collected by</th><th>Handed to</th><th>Badge</th><th>Signature ref</th><th>When</th></tr></thead>
+        <tbody>${evidence.map(x=>`<tr><td><b>${esc(x.item)}</b></td><td class="cell-sub">${esc(x.description||"—")}</td>
+          <td class="cell-sub">${esc(x.collected_by)}</td><td>${esc(x.handed_to||"—")}</td><td class="mono">${esc(x.handed_badge||"—")}</td>
+          <td class="mono cell-sub">${esc(x.signature_ref||"—")}</td><td class="mono cell-sub">${fmtTs(x.recorded_at)}</td></tr>`).join("")}</tbody></table></div>`
+        :`<div class="empty" style="padding:20px"><span>${icon("shield")}</span><h3 style="font-size:13px;color:var(--muted)">No evidence logged</h3><p class="muted" style="font-size:12px">Every item handed to police should be recorded with the receiving officer's badge and a signature reference.</p></div>`}</div></div>
+    </div>`;
   const b = $("#addIntim"); if (b) b.onclick = () => openIntimationModal(id, null);
+  const ev = $("#addEvi"); if (ev) ev.onclick = () => openEvidenceModal(id);
+  const nr = $("#mlcNarr"); if (nr) nr.onclick = () => openNarrativeModal(e.id, m);
+}
+function openEvidenceModal(mlcId) {
+  openModal({ title:"Log evidence item", icon:"shield",
+    body:`<form id="eviForm">
+      <div class="warn-banner" style="margin-bottom:14px">${icon("info")}<div><div class="wt" style="color:var(--teal-ink)">Chain of custody</div>
+        <div class="wm">A break in custody destroys evidentiary value. Record who received it, their badge, and a signature/receipt reference.</div></div></div>
+      <div class="field"><label>Item <span class="req">*</span></label><input class="inp" name="item" placeholder="e.g. blood-stained shirt / spent cartridge / clothing" autocomplete="off"></div>
+      <div class="field"><label>Description</label><textarea class="inp" name="description" rows="2"></textarea></div>
+      <div class="grid-fields"><div class="field"><label>Handed to (officer)</label><input class="inp" name="handed_to" autocomplete="off"></div>
+        <div class="field"><label>Badge no.</label><input class="inp mono" name="handed_badge" autocomplete="off"></div></div>
+      <div class="field"><label>Signature / receipt ref</label><input class="inp mono" name="signature_ref" placeholder="GD entry / receipt no." autocomplete="off"></div>
+    </form>`,
+    footer:`<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="eviSave">${icon("check")} Log item</button>` });
+  $("[data-close]").onclick = closeOverlay;
+  $("#eviSave").onclick = async () => {
+    const f = new FormData($("#eviForm"));
+    if (!(f.get("item")||"").trim()) { toast("err","Item name required"); return; }
+    const body = { item:f.get("item"), description:f.get("description")||undefined,
+      handed_to:f.get("handed_to")||undefined, handed_badge:f.get("handed_badge")||undefined,
+      signature_ref:f.get("signature_ref")||undefined };
+    const r = await api.post(`/api/mlc/${mlcId}/evidence`, body);
+    if (r.ok) { closeOverlay(); toast("ok","Evidence logged", body.item); lwEvent("forge"); viewMlcDetail(mlcId); }
+    else toast("err","Could not log evidence", (r.data&&r.data.error)||("HTTP "+r.status));
+  };
+}
+function openNarrativeModal(encId, m) {
+  openModal({ title:"AI wound-certificate narrative", icon:"sparkles", wide:true,
+    body:`<div class="ai-card" style="margin:0"><div class="ai-hd"><span class="spark">${icon("sparkles")}</span>
+        <span class="t">${esc(m.mlc_serial)} · narrative draft</span><span class="adv">Physician must review, edit &amp; sign</span></div>
+      <div class="ai-bd" id="narrBody"><div class="muted">${icon("clock")} Drafting a neutral, factual narrative from the recorded injury notes…</div></div></div>`,
+    footer:`<button class="btn ghost" data-close>Close</button><button class="btn" id="narrCopy" disabled>${icon("copy")} Copy</button>` });
+  $("[data-close]").onclick = closeOverlay;
+  aiDraft(`/api/ai/mlc-narrative`, { encounter_id:+encId }, "narrBody", "narrCopy");
 }
 
 /* ---- Audit trail ---- */
@@ -1323,10 +1639,140 @@ async function viewOverrides() {
       :`<div class="empty"><span>${icon("flag")}</span><h3>No overrides recorded</h3><p class="muted">Every triage matched the engine suggestion.</p></div>`}</div>`;
 }
 
+/* ---- FR-9 : Pre-arrival / ambulance intake ---- */
+const CODE_TONE = { STEMI:"code-stemi", STROKE:"code-stroke", TRAUMA:"code-trauma" };
+async function viewPrearrival() {
+  const v = viewEl(); v.innerHTML = skeleton(); setCrumbs(["Emergency response","Pre-arrival"]);
+  const r = await api.get("/api/prearrival");
+  if (!r.ok) { v.innerHTML = offlineState(); return; }
+  const rows = r.data;
+  const inbound = rows.filter(x => x.status === "INBOUND");
+  v.innerHTML = `<div class="view-inner view-anim">
+    <div class="page-head"><div class="h"><h1>Pre-arrival board</h1>
+      <div class="sub">${inbound.length} inbound · ambulance pre-alerts &amp; code activation (FR-9)</div></div>
+      <div class="actions">${can("register")?`<button class="btn primary" id="addPre">${icon("siren")} Log pre-alert</button>`:""}</div></div>
+    ${inbound.some(x=>x.code&&x.code!=="NONE")?`<div class="crit-strip"><span class="cs-ic">${icon("siren")}</span>
+      <span class="cs-t"><b>${inbound.filter(x=>x.code&&x.code!=="NONE").length}</b> time-critical code(s) inbound — activate the pathway team</span></div>`:""}
+    ${rows.length?`<div class="pre-grid">${rows.map(preCard).join("")}</div>`
+      :`<div class="empty"><span>${icon("siren")}</span><h3>No pre-alerts</h3><p class="muted">Log an ambulance pre-alert to warm up the resus bay before the patient arrives.</p></div>`}
+  </div>`;
+  const b = $("#addPre"); if (b) b.onclick = openPrearrivalModal;
+  $$("[data-pre-arr]", v).forEach(el => el.onclick = () => closePrearrival(el.dataset.preArr, true));
+  $$("[data-pre-cxl]", v).forEach(el => el.onclick = () => closePrearrival(el.dataset.preCxl, false));
+}
+function preCard(x) {
+  const code = x.code && x.code !== "NONE" ? x.code : null;
+  const vit = (() => { try { return JSON.parse(x.vitals_json || "{}"); } catch(e){ return {}; } })();
+  const vchips = Object.entries(vit).filter(([,val])=>val!=null&&val!=="")
+    .map(([k,val])=>`<span class="badge mono">${esc(k.toUpperCase())} ${esc(val)}</span>`).join("");
+  const done = x.status !== "INBOUND";
+  return `<div class="pre-card ${code?CODE_TONE[code]||"code-on":""} ${done?"done":""}">
+    <div class="pre-hd"><span class="pre-src">${icon("phone")} ${esc(x.source||"108")}</span>
+      ${code?`<span class="code-badge">${esc(code)}</span>`:""}
+      <span class="pre-eta">${x.eta_minutes!=null?`ETA ${x.eta_minutes}m`:"ETA —"}</span></div>
+    <div class="pre-who">${x.age_years!=null?esc(x.age_years):"?"}${esc(x.sex||"")} · ${esc(x.complaint||"unspecified")}</div>
+    ${vchips?`<div class="flex flex-wrap mt3" style="gap:6px">${vchips}</div>`:""}
+    <div class="pre-ft">
+      <span class="badge ${done?"":"warn"}">${esc(pretty(x.status))}</span>
+      ${x.status==="INBOUND"&&can("register")?`<span class="pre-acts">
+        <button class="btn sm primary" data-pre-arr="${x.id}">${icon("check")} Arrived</button>
+        <button class="btn sm ghost" data-pre-cxl="${x.id}">Cancel</button></span>`:""}
+    </div></div>`;
+}
+function openPrearrivalModal() {
+  const codes = ["NONE","STEMI","STROKE","TRAUMA"];
+  openModal({ title:"Log ambulance pre-alert", icon:"siren", wide:true,
+    body:`<form id="preForm">
+      <div class="grid-fields">
+        <div class="field"><label>Source</label><select class="sel" name="source"><option>108</option><option>102</option><option value="PRIVATE">Private ambulance</option><option value="POLICE">Police (PCR)</option></select></div>
+        <div class="field"><label>ETA (min)</label><input class="inp mono" name="eta_minutes" type="number" min="0" max="120" inputmode="numeric" placeholder="8"></div>
+      </div>
+      <div class="grid-fields">
+        <div class="field"><label>Age</label><input class="inp mono" name="age_years" type="number" min="0" max="130" inputmode="numeric"></div>
+        <div class="field"><label>Sex</label><select class="sel" name="sex"><option value="">—</option><option>M</option><option>F</option><option>O</option></select></div>
+      </div>
+      <div class="field"><label>Complaint / mechanism</label><input class="inp" name="complaint" placeholder="e.g. chest pain, diaphoretic / high-speed RTA" autocomplete="off"></div>
+      <div class="grid-fields">
+        <div class="field"><label>HR</label><input class="inp mono" name="hr" type="number" inputmode="numeric"></div>
+        <div class="field"><label>SBP</label><input class="inp mono" name="sbp" type="number" inputmode="numeric"></div>
+        <div class="field"><label>SpO₂</label><input class="inp mono" name="spo2" type="number" inputmode="numeric"></div>
+      </div>
+      <div class="field"><label>Code activation</label>
+        <div class="seg" id="preCode">${codes.map((c,i)=>`<button type="button" data-code="${c}" class="${i===0?"on":""}">${c==="NONE"?"None":c}</button>`).join("")}</div>
+        <div class="hint">${icon("info")} Activating a code pages the pathway team and pre-starts the door-to-intervention clock.</div></div>
+    </form>`,
+    footer:`<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="preSave">${icon("siren")} Broadcast pre-alert</button>` });
+  $("[data-close]").onclick = closeOverlay;
+  let code = "NONE";
+  $$("#preCode button").forEach(b => b.onclick = () => { code = b.dataset.code; $$("#preCode button").forEach(x=>x.classList.toggle("on",x===b)); });
+  $("#preSave").onclick = async () => {
+    const f = new FormData($("#preForm"));
+    const vitals = {}; ["hr","sbp","spo2"].forEach(k => { if (f.get(k)) vitals[k]=+f.get(k); });
+    const body = { source:f.get("source"), eta_minutes:f.get("eta_minutes")?+f.get("eta_minutes"):undefined,
+      age_years:f.get("age_years")?+f.get("age_years"):undefined, sex:f.get("sex")||undefined,
+      complaint:f.get("complaint")||undefined, code, vitals };
+    const r = await api.post("/api/prearrival", body);
+    if (r.ok) { closeOverlay(); toast("ok","Pre-alert broadcast", code!=="NONE"?`${code} code activated`:"inbound logged"); lwEvent("nucleate"); refreshCounts(); viewPrearrival(); }
+    else toast("err","Could not log pre-alert", (r.data&&r.data.error)||("HTTP "+r.status));
+  };
+}
+async function closePrearrival(pid, arrived) {
+  const r = await api.post(`/api/prearrival/${pid}/close`, { arrived });
+  if (r.ok) { toast(arrived?"ok":"info", arrived?"Marked arrived":"Pre-alert cancelled", arrived?"Register the patient to continue":""); refreshCounts(); viewPrearrival(); }
+  else toast("err","Could not update", (r.data&&r.data.error)||("HTTP "+r.status));
+}
+
+/* ---- FR-10 : MCI / mass-casualty mode ---- */
+const MCI_TAGS = [
+  { tag:"RED",    label:"Immediate", desc:"L1 · life threat", cls:"lvl-1" },
+  { tag:"YELLOW", label:"Delayed",   desc:"L3 · can wait",    cls:"lvl-3" },
+  { tag:"GREEN",  label:"Minor",     desc:"L4 · walking",     cls:"lvl-4" },
+  { tag:"BLACK",  label:"Expectant", desc:"deceased / expectant", cls:"lvl-none" },
+];
+async function viewMci() {
+  const v = viewEl(); v.innerHTML = skeleton(); setCrumbs(["Emergency response","MCI mode"]);
+  const r = await api.get("/api/mci");
+  if (!r.ok) { v.innerHTML = offlineState(); return; }
+  const D = r.data, t = D.tally || {};
+  v.innerHTML = `<div class="view-inner view-anim">
+    <div class="page-head"><div class="h"><h1>Mass-casualty incident</h1>
+      <div class="sub">START-style single-tap triage tagging · ${D.total||0} casualties logged (FR-10)</div></div></div>
+
+    <div class="mci-tags">
+      ${MCI_TAGS.map(m=>`<div class="mci-tag mci-${m.tag.toLowerCase()}">
+        <div class="mt-count">${t[m.tag]||0}</div>
+        <div class="mt-lbl">${esc(m.tag)}</div><div class="mt-desc">${esc(m.label)} · ${esc(m.desc)}</div>
+        ${can("register")?`<button class="btn sm" data-mci="${m.tag}">${icon("plus")} Tag casualty</button>`:""}
+      </div>`).join("")}
+    </div>
+
+    <div class="card mt4"><div class="hd"><span class="card-title-icn">${icon("activity")}</span><h3>Casualty log</h3>
+      <span class="sub">newest first · each RED/YELLOW/GREEN opens a triaged encounter automatically</span></div>
+      <div class="bd">${(D.casualties&&D.casualties.length)?`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tag</th><th>Temp ID / name</th><th>Status</th><th>Logged</th><th></th></tr></thead>
+        <tbody>${D.casualties.map(c=>`<tr class="clickable" data-enc="${c.encounter_id}">
+          <td><span class="mci-chip mci-${(c.tag||"").toLowerCase()}">${esc(c.tag)}</span></td>
+          <td class="mono">${esc(c.label||("ENC-"+c.encounter_id))}</td>
+          <td>${statusBadge(c.status)}</td>
+          <td class="mono cell-sub">${fmtTs(c.arrival_ts)}</td>
+          <td class="right">${icon("chevronR")}</td></tr>`).join("")}</tbody></table></div>`
+        :`<div class="empty" style="padding:24px"><span>${icon("activity")}</span><h3 style="font-size:13px;color:var(--muted)">No casualties logged</h3><p class="muted" style="font-size:12px">In an MCI, tag each casualty above — the register catches up later. Unknown patients get an MCI temp ID instantly.</p></div>`}</div></div>
+    <div class="hint mt3">${icon("info")} START = Simple Triage And Rapid Treatment. RED first, then YELLOW, then GREEN; BLACK is expectant/deceased and is recorded closed. Everything here is a real encounter you can open, re-triage and reconcile.</div>
+  </div>`;
+  $$("[data-mci]", v).forEach(b => b.onclick = () => tagCasualty(b.dataset.mci));
+  $$("[data-enc]", v).forEach(el => el.onclick = () => location.hash = "#/encounter/"+el.dataset.enc);
+}
+async function tagCasualty(tag) {
+  const r = await api.post("/api/mci/register", { tag });
+  if (r.ok) { toast("ok",`${tag} casualty tagged`, r.data.temp_id); lwEvent("nucleate"); refreshCounts(); viewMci(); }
+  else toast("err","Could not tag", (r.data&&r.data.error)||("HTTP "+r.status));
+}
+
 /* ---------------- router ---------------- */
 const ROUTES = [
   [/^\/?$/, viewDashboard],
   [/^\/board$/, viewBoard],
+  [/^\/prearrival$/, viewPrearrival],
+  [/^\/mci$/, viewMci],
   [/^\/register$/, viewRegister],
   [/^\/patients$/, viewPatients],
   [/^\/triage\/(\d+)$/, (m)=>viewTriage(m[1])],
