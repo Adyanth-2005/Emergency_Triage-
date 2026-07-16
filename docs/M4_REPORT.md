@@ -1,10 +1,7 @@
 # M4 Report — P5: Emergency Department Triage & Medico‑Legal Workflow
-
-**Milestone:** M4 (Demo + Viva, 16 Jul) · **Updated:** 15 Jul 2026 ·
-**Graded scope:** FR‑1, 2, 4, 8 ( complete) · **Extension shipped:** FR‑3, 5, 6, 7, 9, 10, 11, 13, 14 + AI‑2/3/4/5 ·
 **Repo:** github.com/Adyanth-2005/Emergency_Triage- · **Live:** ed‑triage‑snowy.vercel.app
 
-## 1. What it is (in two lines)
+## 1. What it is
 
 A production‑style Emergency Department console: structured triage, treat‑first registration,
 the Indian medico‑legal (MLC) workflow, and dispositions — with session auth + RBAC, a
@@ -96,7 +93,7 @@ never assigns — `triage_rules.py`); AI‑2 MLC‑narrative and AI‑4 referral
   — it never writes a clinical or statutory record; the hosted Vercel demo runs with AI
   disabled and an ephemeral database by design.
 
-## 7. How to run (viva)
+## 7. How to run
 
 `pip install -r requirements.txt` → `python seed.py` → `python app.py` → sign in
 `doctor@hospital.com` / `password123`. Full local AI + Advanced‑RAG steps in `INSTRUCTIONS.md`;
